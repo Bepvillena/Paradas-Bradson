@@ -1004,7 +1004,9 @@ function ensureVistaInformeDetalle() {
       inputObjetivoPrincipal: 'objetivoPrincipal', inputAdminCentinela: 'adminCentinela', inputAdminSemiva: 'adminSemiva',
       inputEncargadoNombre: 'encargadoNombre', inputHerramientas: 'herramientasTexto', inputConsumibles: 'consumiblesTexto',
     };
-    document.getElementById(id).addEventListener('blur', (e) => guardarCampoInformeActivo(campoMap[id], e.target.value));
+    // Guardado automático: mientras se escribe (con una pausa de ~0,7 s), al salir
+    // del campo, y al cerrar/minimizar la app — nada depende de "apretar guardar".
+    guardadoAutomaticoCampo(document.getElementById(id), (valor) => guardarCampoInformeActivo(campoMap[id], valor));
   });
 
   document.getElementById('btnAddPreparativosFoto').addEventListener('click', () => {
@@ -1012,6 +1014,10 @@ function ensureVistaInformeDetalle() {
     renderPreparativosFotoRows();
   });
   document.getElementById('btnGuardarPreparativos').addEventListener('click', guardarPreparativosInforme);
+  // El texto de preparativos se guarda solo; las fotos siguen con "Guardar preparativos" (hay que subirlas).
+  guardadoAutomaticoCampo(document.getElementById('inputPreparativosTexto'), (valor) => {
+    guardarCampoInformeActivo('preparativosTexto', valor.split('\n').map((s) => s.trim()).filter(Boolean));
+  });
 
   document.getElementById('btnEditarComoDocumento').addEventListener('click', async () => {
     const btn = document.getElementById('btnEditarComoDocumento');
@@ -1041,6 +1047,29 @@ function ensureVistaInformeDetalle() {
     catch (e) { console.error(e); showToast('No se pudo generar el PDF'); }
     btn.disabled = false; btn.textContent = txt;
   });
+}
+
+// Guarda el contenido de un campo de texto solo: 0,7 s después de dejar de
+// escribir, al salir del campo, y al minimizar/cerrar la app (pagehide /
+// visibilitychange). `guardar(valor)` es quien escribe el dato.
+const guardadosAutomaticosPendientes = new Set();
+function vaciarGuardadosAutomaticos() { Array.from(guardadosAutomaticosPendientes).forEach((fn) => fn()); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') vaciarGuardadosAutomaticos(); });
+window.addEventListener('pagehide', vaciarGuardadosAutomaticos);
+
+function guardadoAutomaticoCampo(el, guardar) {
+  if (!el) return;
+  let timer = null, pendiente = false;
+  const ahora = () => {
+    clearTimeout(timer);
+    if (!el.isConnected) guardadosAutomaticosPendientes.delete(ahora);
+    if (!pendiente) return;
+    pendiente = false;
+    guardar(el.value);
+  };
+  guardadosAutomaticosPendientes.add(ahora);
+  el.addEventListener('input', () => { pendiente = true; clearTimeout(timer); timer = setTimeout(ahora, 700); });
+  el.addEventListener('blur', ahora);
 }
 
 function renderDetallePortadaPreview() {
@@ -1108,7 +1137,7 @@ function renderConclusionesLista() {
       <textarea rows="3" data-conclusion="${ot.otNum}">${escBit(propias[ot.otNum] || generarConclusionTextoOt(ot))}</textarea>
     </div>`).join('') || '<p style="font-size:11.5px; color:var(--ink-dim); margin:0;">Este informe no tiene actividades todavía.</p>';
   wrap.querySelectorAll('[data-conclusion]').forEach((ta) => {
-    ta.addEventListener('blur', async () => {
+    guardadoAutomaticoCampo(ta, async () => {
       const ot = ots.find((o) => String(o.otNum) === String(ta.dataset.conclusion));
       const mapa = { ...(state.informeActivo.conclusiones || {}) };
       const texto = ta.value.trim();
@@ -1131,7 +1160,7 @@ function renderRecomendacionesLista() {
       <textarea rows="2" data-recomendacion="${ot.otNum}" placeholder="(opcional)">${escBit(recs[ot.otNum] || '')}</textarea>
     </div>`).join('') || '<p style="font-size:11.5px; color:var(--ink-dim); margin:0;">Este informe no tiene actividades todavía.</p>';
   wrap.querySelectorAll('[data-recomendacion]').forEach((ta) => {
-    ta.addEventListener('blur', async () => {
+    guardadoAutomaticoCampo(ta, async () => {
       const recs = { ...(state.informeActivo.recomendaciones || {}) };
       if (ta.value.trim()) recs[ta.dataset.recomendacion] = ta.value;
       else delete recs[ta.dataset.recomendacion];
@@ -2747,9 +2776,13 @@ async function generateInformeWordBlob(informe, opciones = {}) {
 
     let prepRowsXml = '';
     if (prepTextoRaw.length) {
+      // El rango de fechas de la etapa cubre TODAS las fechas de preparativos:
+      // la inicial y final escritas a mano y las de cada fila de fotos.
       const hoyISO = new Date().toISOString().slice(0, 10);
-      const iniISO = informe.preparativosFechaIni || hoyISO;
-      const finISO = informe.preparativosFechaFin;
+      const fechasPrep = [informe.preparativosFechaIni, informe.preparativosFechaFin, ...prepFotos.map((f) => f.fecha)]
+        .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f || '')).sort();
+      const iniISO = fechasPrep.length ? fechasPrep[0] : hoyISO;
+      const finISO = fechasPrep.length ? fechasPrep[fechasPrep.length - 1] : '';
       prepRowsXml += buildFilaFechaWord(finISO && finISO !== iniISO ? `${fechaDDMMYYYY(iniISO)} AL ${fechaDDMMYYYY(finISO)}` : fechaDDMMYYYY(iniISO));
       prepRowsXml += buildFilaTurnoWord('PREPARATIVOS', [{ titulo: 'Actividades de preparativos', bullets: prepTextoRaw }], false);
     }
@@ -3839,7 +3872,10 @@ function abrirDialogoEditor({ titulo, campos, textoGuardar = 'Guardar', onGuarda
     }
   });
   const primero = bd.querySelector('input, textarea, select');
-  if (primero && primero.type !== 'file') primero.focus();
+  // En el celular no se abre el teclado de golpe (al mismo tiempo que aparece el
+  // cuadro, el cambio de tamaño de pantalla lo dejaba fuera de vista); se abre al tocar el campo.
+  const esTactil = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  if (primero && primero.type !== 'file' && !esTactil) primero.focus();
 }
 
 // Cuadro chico para escribir un valor (título) sin salir del documento.
@@ -3860,18 +3896,12 @@ function abrirEdicionTextoInforme(informe, campo, etiqueta, valorActual) {
 }
 
 // Selector de archivo para cambiar una foto directo desde el documento.
-function abrirSelectorFotoInforme(informe, campo) {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.addEventListener('change', async () => {
-    const file = input.files[0];
-    if (!file) return;
-    showToast('Subiendo foto…');
-    await subirArchivoInforme(file, campo, null);
-    await refrescarVistaInteractiva();
-  });
-  input.click();
+async function abrirSelectorFotoInforme(informe, campo) {
+  const file = await elegirArchivoEditor('image/*');
+  if (!file) return;
+  showToast('Subiendo foto…');
+  await subirArchivoInforme(file, campo, null);
+  await refrescarVistaInteractiva();
 }
 
 // Lista con check de las actividades que van en este informe — mismo dato
@@ -3930,12 +3960,20 @@ function datosBaseEntradaBitacora(ot, fecha, turno) {
 // editable ahí mismo — se toca el texto para cambiarlo, la foto para
 // añadirla o quitarla. Todo se guarda en los mismos datos de siempre.
 
+// El selector de archivos va dentro de la página (oculto): en el WebView de
+// Android un <input> suelto, fuera del documento, a veces nunca avisa que se
+// eligió un archivo (por eso "no aparecían las fotos").
 function elegirArchivoEditor(accept) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept || 'image/*';
-    input.addEventListener('change', () => resolve(input.files[0] || null));
+    input.style.cssText = 'position:fixed; left:-9999px; top:0; opacity:0; width:1px; height:1px;';
+    document.body.appendChild(input);
+    let terminado = false;
+    const fin = (archivo) => { if (terminado) return; terminado = true; input.remove(); resolve(archivo); };
+    input.addEventListener('change', () => fin(input.files[0] || null));
+    input.addEventListener('cancel', () => fin(null));
     input.click();
   });
 }

@@ -1042,3 +1042,7 @@ body.en-inicio nav.tabs{ display:none; }
 @media (prefers-reduced-motion: reduce){
   .editor-contenedor, .editor-contenedor.editor-entra, .doc-nuevo, .editor-dialogo, .editor-dialogo-backdrop{ animation:none; transition:none; }
 }
+
+/* Diálogos del editor: siempre visibles aunque el teclado del celular esté abierto */
+.editor-dialogo-backdrop{ align-items:flex-start; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-top:max(14px, 5vh); padding-bottom:14px; }
+.editor-dialogo{ margin:0 auto; max-width:100%; }
