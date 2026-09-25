@@ -1,0 +1,11 @@
+{
+  "appId": "cl.bradson.paradas",
+  "appName": "Paradas Bradson",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

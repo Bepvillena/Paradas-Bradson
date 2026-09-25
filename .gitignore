@@ -1,0 +1,8 @@
+node_modules/
+android/
+www/
+*.log
+
+Curva-S-App-Standalone.html
+var-*.docx
+__uploaded.bin
