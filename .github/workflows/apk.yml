@@ -38,6 +38,12 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      # Android 11+ exige declarar que la app puede abrir archivos con otras apps
+      # (para el botón que abre el Word/PDF con Word, WPS, visor de PDF…)
+      - name: Permitir abrir archivos con otras apps
+        run: |
+          sed -i 's|<application|<queries><intent><action android:name="android.intent.action.VIEW"/><data android:mimeType="*/*"/></intent></queries>\n    <application|' android/app/src/main/AndroidManifest.xml
+
       # Ícono de la app (Android) a partir de la carpeta resources/
       - name: Generar íconos
         run: npx capacitor-assets generate --android --assetPath resources

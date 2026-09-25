@@ -879,6 +879,12 @@ function ensureVistaInformeDetalle() {
       <button type="button" class="btn-borrar-informe" id="btnBorrarInformeDetalle" title="Eliminar informe" style="font-size:18px;">🗑</button>
     </div>
 
+    <button type="button" class="btn-entrar" id="btnEditarComoDocumento" style="width:100%; margin-bottom:10px;">✏️ Editar como documento</button>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button type="button" class="btn-mini btn-mini-primary" id="btnRellenarWordInforme" style="flex:1; padding:12px 8px; font-size:14px;">⬇ Descargar Word</button>
+      <button type="button" class="btn-mini btn-mini-primary" id="btnGenerarPdfInforme" style="flex:1; padding:12px 8px; font-size:14px;">⬇ Descargar PDF</button>
+    </div>
+
     <button type="button" class="btn-entrar" id="btnVerActividadesInforme" style="width:100%; margin-bottom:16px;">📋 Ver actividades de este informe</button>
 
     <div class="informe-form-bloque">
@@ -957,10 +963,7 @@ function ensureVistaInformeDetalle() {
 
     <div class="informe-card-acciones" style="margin-top:6px; margin-bottom:24px;">
       <a href="#" target="_blank" rel="noopener" class="btn-mini" id="linkAbrirWordInforme" style="display:none;">Abrir Word</a>
-      <button type="button" class="btn-mini btn-mini-primary" id="btnEditarComoDocumento">✏️ Editar como documento</button>
       <button type="button" class="btn-mini" id="btnVistaPreviaWordInforme">👁 Vista previa</button>
-      <button type="button" class="btn-mini" id="btnRellenarWordInforme">⬇ Descargar Word</button>
-      <button type="button" class="btn-mini" id="btnGenerarPdfInforme">⬇ PDF (borrador)</button>
     </div>
   `;
   main.appendChild(div);
@@ -3351,10 +3354,25 @@ async function descargarBlob(blob, nombreArchivo) {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const { Filesystem, Share } = window.Capacitor.Plugins;
+      const { Filesystem, Share, FileOpener } = window.Capacitor.Plugins;
       const resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'DOCUMENTS' });
       showToast(`Guardado en Documentos: ${nombreArchivo}`);
-      if (Share) Share.share({ title: nombreArchivo, url: resultado.uri }).catch(() => {});
+      // Se abre con "Abrir con…" (Word, WPS, visor de PDF…), no con el menú de
+      // compartir. Solo si el teléfono no tiene ninguna app para ese archivo
+      // se ofrece compartirlo.
+      const mime = blob.type || (/\.pdf$/i.test(nombreArchivo) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      let abierto = false;
+      if (FileOpener) {
+        const rutas = [resultado.uri, decodeURIComponent(String(resultado.uri).replace(/^file:\/\//, ''))];
+        for (const filePath of rutas) {
+          try { await FileOpener.open({ filePath, contentType: mime, openWithDefault: false }); abierto = true; break; }
+          catch (e) { console.error('FileOpener falló con', filePath, e); }
+        }
+      }
+      if (!abierto) {
+        showToast('No encontré una app para abrirlo — queda guardado en Documentos');
+        if (Share) Share.share({ title: nombreArchivo, url: resultado.uri }).catch(() => {});
+      }
     } catch (e) {
       console.error('No se pudo guardar el archivo en el dispositivo:', e);
       showToast('No se pudo guardar el archivo — revisa el espacio disponible');

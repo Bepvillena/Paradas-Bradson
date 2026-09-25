@@ -236,6 +236,68 @@
     return { ref: storageRefFactory };
   }
 
+  // ---- Archivos guardados (./__localfile/<ruta>) SIN depender del service
+  // worker. Dentro del APK (WebView de Android) el service worker no siempre
+  // controla la página, y sin él las fotos guardadas no cargaban (íconos rotos)
+  // ni se podían leer para armar el Word/PDF. Acá se resuelven directo desde
+  // IndexedDB: fetch() devuelve el archivo, y las <img>/<a> que apuntan a esa
+  // ruta se cambian por una URL blob: en cuanto aparecen en pantalla. ----
+  function rutaDeUrlLocal(url) {
+    const m = /__localfile\/([^?#]*)/.exec(String(url || ''));
+    if (!m) return null;
+    try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
+  }
+  async function blobDeArchivoLocal(path) {
+    const stored = await idbGet(STORE_FILES, path);
+    if (!stored) return null;
+    return stored.buf ? new Blob([stored.buf], { type: stored.type || 'application/octet-stream' }) : stored;
+  }
+
+  const fetchOriginal = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const ruta = rutaDeUrlLocal(url);
+    if (ruta) {
+      return blobDeArchivoLocal(ruta).then((blob) => (blob
+        ? new Response(blob, { status: 200, headers: { 'Content-Type': blob.type || 'application/octet-stream' } })
+        : new Response('', { status: 404 })));
+    }
+    return fetchOriginal(input, init);
+  };
+
+  const blobUrls = new Map();
+  async function resolverElementoLocal(el, attr) {
+    const valor = el.getAttribute(attr);
+    const ruta = valor && valor.indexOf('__localfile/') !== -1 ? rutaDeUrlLocal(valor) : null;
+    if (!ruta) return;
+    let u = blobUrls.get(ruta);
+    if (!u) {
+      const blob = await blobDeArchivoLocal(ruta);
+      if (!blob) return;
+      u = URL.createObjectURL(blob);
+      blobUrls.set(ruta, u);
+    }
+    if (el.getAttribute(attr) === valor) el.setAttribute(attr, u);
+  }
+  function revisarArbolLocal(raiz) {
+    if (!raiz || raiz.nodeType !== 1) return;
+    const atributo = (el) => (el.tagName === 'IMG' ? 'src' : (el.tagName === 'A' ? 'href' : null));
+    const a0 = atributo(raiz);
+    if (a0) resolverElementoLocal(raiz, a0);
+    raiz.querySelectorAll('img[src*="__localfile/"], a[href*="__localfile/"]').forEach((el) => resolverElementoLocal(el, atributo(el)));
+  }
+  function iniciarObservadorLocal() {
+    new MutationObserver((muts) => {
+      muts.forEach((m) => {
+        if (m.type === 'childList') m.addedNodes.forEach(revisarArbolLocal);
+        else if (m.type === 'attributes') revisarArbolLocal(m.target);
+      });
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href'] });
+    revisarArbolLocal(document.documentElement);
+  }
+  if (document.documentElement) iniciarObservadorLocal();
+  else document.addEventListener('DOMContentLoaded', iniciarObservadorLocal);
+
   // ---- window.firebase (reemplaza al SDK real) ----
   window.firebase = {
     initializeApp() {},
