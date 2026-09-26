@@ -1568,7 +1568,12 @@ function tituloSinEquipo(desc) {
 // convierte en "toca para editar" sobre ese mismo texto) y cada actividad
 // cierra con ⟦AÑADIR:paso:...⟧. Los pasos vacíos (recién creados) solo se ven
 // en el editor; en el Word final se omiten.
-function buildFilaTurnoWord(turnoLabel, items, continuaMismoDia, modoEditor) {
+// vinculosCtx (ver el pre-cálculo al inicio de generateInformeWordBlob):
+// { vinculos, mapaNumerosPrep, mapaNumerosParada, mapaNumerosAnexos } — para
+// resolver, si un bullet tiene un link guardado, a qué bookmark/frase
+// corresponde ahora. Puede venir null/undefined donde no aplica (nunca pasa
+// dentro de esta función, todos los llamadores ya lo tienen armado).
+function buildFilaTurnoWord(turnoLabel, items, continuaMismoDia, modoEditor, vinculosCtx) {
   const pid = randParaIdWord();
   const conId = modoEditor ? items.filter((it) => it.id) : [];
   if (conId.length) turnoLabel += ` ⟦EDIT:turno:${conId.map((it) => it.id).join('|')}⟧`;
@@ -1576,23 +1581,78 @@ function buildFilaTurnoWord(turnoLabel, items, continuaMismoDia, modoEditor) {
     ? '<w:tcBorders><w:top w:val="single" w:sz="12" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders>'
     : INFORME_TC_BORDERS;
   const header = `<w:p><w:pPr><w:spacing w:before="120"/><w:ind w:right="115"/><w:jc w:val="left"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Calibri" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:iCs/><w:sz w:val="20"/><w:u w:val="single"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Calibri" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:iCs/><w:sz w:val="20"/><w:u w:val="single"/></w:rPr><w:t>${escXmlWord(turnoLabel)}</w:t></w:r></w:p>`;
-  const cuerpo = items.map(({ id, titulo, bullets }) => {
+  // Un item sin "titulo" (el checklist fijo de seguridad del turno, ver
+  // checklistTurnoWord) no lleva encabezado en negrita — sus viñetas van
+  // directo bajo "TURNO DÍA/NOCHE", como en el documento real.
+  const cuerpo = items.map(({ id, titulo, bullets, linkKeyBase }) => {
     const editable = modoEditor && id;
-    const tituloPara = `<w:p><w:pPr><w:spacing w:before="80"/><w:jc w:val="left"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(tituloSinEquipo(titulo) + (editable ? ` ⟦EDIT:ot:${id}⟧` : ''))}</w:t></w:r></w:p>`;
-    const lineas = editable
-      ? bullets.map((b, i) => (b && b.trim() ? b : '(toca aquí para escribir el paso)') + ` ⟦EDIT:paso:${id}:${i}⟧`)
-      : bullets.filter((b) => b && b.trim());
-    const listaBullets = (lineas.length ? lineas : ['(sin comentarios registrados)']).map((b) =>
-      `<w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="5"/></w:numPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="1170" w:hanging="709"/><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(b)}</w:t></w:r></w:p>`
-    ).join('');
+    const tituloPara = titulo ? `<w:p><w:pPr><w:spacing w:before="80"/><w:jc w:val="left"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(tituloSinEquipo(titulo) + (editable ? ` ⟦EDIT:ot:${id}⟧` : ''))}</w:t></w:r></w:p>` : '';
+    // claveVinculo: la llave con la que se guardó un link para ESTE bullet en
+    // particular (ver informe.vinculos) — "prep" salta el índice 0 porque ese
+    // es siempre la línea fija de la charla de seguridad (ver
+    // buildFilaTurnoWord llamado desde la sección de preparativos).
+    const claveVinculo = (i) => {
+      if (!linkKeyBase) return null;
+      if (linkKeyBase === 'prep') return i > 0 ? `prep:${i - 1}` : null;
+      return `${linkKeyBase}:${i}`;
+    };
+    const lineasConIdx = (editable
+      ? bullets.map((b, i) => [i, (b && b.trim() ? b : '(toca aquí para escribir el paso)')])
+      : bullets.map((b, i) => [i, b]).filter(([, b]) => b && b.trim())
+    );
+    const listaBullets = (lineasConIdx.length ? lineasConIdx : [[-1, '(sin comentarios registrados)']]).map(([i, b]) => {
+      const clave = i >= 0 ? claveVinculo(i) : null;
+      const refVinculo = clave && vinculosCtx ? vinculosCtx.vinculos[clave] : null;
+      const resuelto = refVinculo
+        ? resolverVinculoTextoWord(refVinculo.ref, vinculosCtx.mapaNumerosPrep, vinculosCtx.mapaNumerosParada, vinculosCtx.mapaNumerosAnexos)
+        : null;
+      const marcaEdit = editable ? ` ⟦EDIT:paso:${id}:${i}⟧` : '';
+      // En un bullet editable (pasos de OT) el link se edita DENTRO del mismo
+      // diálogo del paso (dialogoEditarPaso) — no hace falta otra marca (dos
+      // marcas ⟦EDIT:...⟧ en el mismo párrafo pondrían dos "onclick" y
+      // abrirían dos diálogos a la vez). En uno no editable (preparativos,
+      // que se edita en bloque) esta es la ÚNICA forma de tocarlo.
+      const marcaLink = (!editable && modoEditor && clave) ? ` ⟦EDIT:link:${clave}⟧` : '';
+      const corridaTexto = `<w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(b + marcaEdit + marcaLink)}</w:t></w:r>`;
+      const corridaLink = resuelto ? buildCorridaHipervinculoWord(resuelto.bookmark, resuelto.frase) : '';
+      return `<w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="5"/></w:numPr><w:spacing w:line="276" w:lineRule="auto"/><w:ind w:left="1170" w:hanging="709"/><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr>${corridaTexto}${corridaLink}</w:p>`;
+    }).join('');
     return tituloPara + listaBullets + (editable ? buildMarcaEditorWord(`⟦AÑADIR:paso:${id}⟧`) : '');
   }).join('');
   return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:trHeight w:val="482"/><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10206" w:type="dxa"/>${tcBorders}<w:vAlign w:val="center"/></w:tcPr>${header}${cuerpo}</w:tc></w:tr>`;
 }
 
+// ---- Checklist fijo de seguridad al inicio de cada bloque "TURNO DÍA/NOCHE"
+// de "ACTIVIDADES REALIZADAS EN PERIODO DE PARADA": el 1° y 2° turno de la
+// parada (Día o Noche, lo que corresponda primero) llevan 5 puntos fijos; del
+// 3° turno en adelante, 2 puntos fijos. Es texto cerrado (no se puede agregar
+// ni quitar líneas) — lo único editable es la hora del bloqueo, que queda
+// guardada en informe.turnoBloqueoHoras[turnoIdx]. ----
+const CHECKLIST_TURNO_INICIAL = [
+  'Se llevó a cabo la charla de seguridad de inicio de la jornada.',
+  'Se procedió con el llenado de los permisos y aprobación con los encargados de área.',
+  'Se realizó el alistado de herramientas con su respectiva documentación.',
+  'Se realizó la difusión del PETS para realizar el trabajo.',
+];
+const CHECKLIST_TURNO_POSTERIOR = [
+  'Se elabora y se firma documentos de seguridad.',
+];
+
+function checklistTurnoWord(ordinalTurno, turnoIdx, horaBloqueo, modoEditor) {
+  const base = ordinalTurno <= 2 ? CHECKLIST_TURNO_INICIAL : CHECKLIST_TURNO_POSTERIOR;
+  const horaTexto = horaBloqueo && horaBloqueo.trim() ? horaBloqueo.trim() : '(toca aquí para poner la hora)';
+  const lineaBloqueo = `Se realizó el bloqueo a las ${horaTexto} h.` + (modoEditor ? ` ⟦EDIT:bloqueo:${turnoIdx}⟧` : '');
+  return { id: null, titulo: null, bullets: [...base, lineaBloqueo] };
+}
+
 const INFORME_EMU_POR_CM = 360000;
 const INFORME_FOTO_MAX_ANCHO_CM = 9;
-const INFORME_FOTO_MAX_ALTO_CM = 7;
+// 4.3cm (antes 7cm): con este alto entran 3 filas (6 fotos) por hoja en el
+// REGISTRO FOTOGRÁFICO en vez de solo 1 — ver INFORME_FOTO_TRHEIGHT_TWIPS,
+// que tiene que quedar sincronizado con este valor (twips, para la fila de
+// la tabla) porque Word no puede calcularlo solo a partir del EMU de la foto.
+const INFORME_FOTO_MAX_ALTO_CM = 4.3;
+const INFORME_FOTO_TRHEIGHT_TWIPS = Math.round(INFORME_FOTO_MAX_ALTO_CM * 566.929);
 
 // Baja la foto (URL de Firebase Storage), la RECORTA al centro para que su
 // proporción sea exactamente 9:7 (así no quedan márgenes/franjas vacías dentro
@@ -1811,9 +1871,10 @@ function buildTituloAnexoWord(cat, conSaltoDePagina) {
   return `<w:p w14:paraId="${pid}" w14:textId="${pid}"><w:pPr><w:pStyle w:val="Ttulo2"/>${conSaltoDePagina ? '<w:pageBreakBefore/>' : ''}<w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr>${bmS}<w:r><w:t>${cat.titulo}</w:t></w:r>${bmE}</w:p>`;
 }
 
-function buildImagenAnexoWord(drawingXml, conSaltoDePagina) {
+function buildImagenAnexoWord(drawingXml, conSaltoDePagina, nombreBookmark) {
   const pid = randParaIdWord();
-  return `<w:p w14:paraId="${pid}" w14:textId="${pid}"><w:pPr><w:keepNext/>${conSaltoDePagina ? '<w:pageBreakBefore/>' : ''}<w:spacing w:after="0"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:noProof/></w:rPr>${drawingXml}</w:r></w:p>`;
+  const bm = nombreBookmark ? buildBookmarkWordInline(nombreBookmark) : null;
+  return `<w:p w14:paraId="${pid}" w14:textId="${pid}"><w:pPr><w:keepNext/>${conSaltoDePagina ? '<w:pageBreakBefore/>' : ''}<w:spacing w:after="0"/><w:jc w:val="center"/></w:pPr>${bm ? bm.start : ''}<w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:noProof/></w:rPr>${drawingXml}</w:r>${bm ? bm.end : ''}</w:p>`;
 }
 
 function buildLeyendaAnexoWord(etiqueta, numero, texto, marcaEditor) {
@@ -1836,6 +1897,82 @@ function buildDrawingXmlWord(rId, cx, cy, docPrId) {
   return `<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${docPrId}" name="Imagen ${docPrId}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="Picture ${docPrId}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1" noChangeArrowheads="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill rotWithShape="1"><a:blip r:embed="${rId}"/><a:stretch/></pic:blipFill><pic:spPr bwMode="auto"><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln><a:noFill/></a:ln></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>`;
 }
 
+// ---- Hipervínculos internos "Ver imagen N…" dentro de un párrafo, hacia una
+// foto/anexo ya incrustado en el mismo documento. Un bookmarkStart/End
+// alrededor de la imagen destino le da un nombre al que el hipervínculo
+// apunta (w:anchor). El w:id de cada bookmark solo necesita ser único en
+// todo el documento — un contador que nunca se reinicia alcanza de sobra. ----
+let contadorBookmarkLink = 90000;
+function buildBookmarkWordInline(nombre) {
+  const id = contadorBookmarkLink++;
+  return { start: `<w:bookmarkStart w:id="${id}" w:name="${nombre}"/>`, end: `<w:bookmarkEnd w:id="${id}"/>` };
+}
+
+// El texto del link va en negrita, negro y sin subrayado (se ve como texto
+// normal, no como un hipervínculo típico) pero sigue siendo clickeable en
+// Word porque igual es un <w:hyperlink> real apuntando a un bookmark.
+function buildCorridaHipervinculoWord(nombreBookmark, frase) {
+  const rPr = '<w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:color w:val="000000" w:themeColor="text1"/><w:u w:val="none"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>';
+  return `<w:hyperlink w:anchor="${nombreBookmark}" w:history="1"><w:r>${rPr}<w:t xml:space="preserve"> ${escXmlWord(frase)}</w:t></w:r></w:hyperlink>`;
+}
+
+// Frase visible del link, en formato oración (no mayúsculas) — a partir del
+// tipo de destino guardado en informe.vinculos (ver resolverVinculoTextoWord).
+function fraseVinculoWord(tipo, numero) {
+  if (tipo === 'fotoPrep' || tipo === 'fotoParada') return `Ver imagen ${numero} del registro fotográfico.`;
+  if (tipo === 'anexoDiagrama') return `Ver diagrama ${numero}.`;
+  if (tipo === 'anexoPlano') return `Ver plano ${numero}.`;
+  if (tipo === 'anexoProtocolo') return `Ver protocolo ${numero}.`;
+  return '';
+}
+
+// Mismo orden/emparejado que usan buildBloqueRegistroFotosWord y
+// buildBloqueRegistroFotosPreparativosWord — se recorre aparte (sin tocar
+// esas funciones) solo para saber, de antemano, qué número de IMAGEN le va a
+// tocar a cada foto (por su .ref) y así poder resolver un vínculo guardado.
+function calcularNumerosFotosPar(fotosEmbebidas) {
+  const mapa = {};
+  let contador = 0, i = 0;
+  while (i < fotosEmbebidas.length) {
+    const a = fotosEmbebidas[i];
+    const siguiente = fotosEmbebidas[i + 1];
+    const b = fotosSonPar(a, siguiente) ? siguiente : null;
+    mapa[a.ref] = contador + 1;
+    if (b) mapa[b.ref] = contador + 2;
+    contador += b ? 2 : 1;
+    i += b ? 2 : 1;
+  }
+  return mapa;
+}
+
+// Convierte una referencia guardada en informe.vinculos (ref de foto tipo
+// "p:2"/"e:abc~0", o de anexo tipo "anexo:diagrama:1") en el bookmark real y
+// la frase a mostrar — usando los mapas de números ya calculados para ESTA
+// generación del Word. Devuelve null si la foto/anexo referenciado ya no
+// existe (se borró, o falló al cargar) — el párrafo simplemente se queda sin
+// el link, en vez de romper la generación del informe.
+function resolverVinculoTextoWord(ref, mapaNumerosPrep, mapaNumerosParada, mapaNumerosAnexos) {
+  if (!ref) return null;
+  if (ref.startsWith('anexo:')) {
+    const partes = ref.split(':'); // anexo:<categoria>:<_i>
+    const info = mapaNumerosAnexos[ref];
+    if (!info) return null;
+    const prefijo = { diagrama: 'anexoDiagrama', plano: 'anexoPlano', protocolo: 'anexoProtocolo' }[partes[1]];
+    const tipo = { diagrama: 'anexoDiagrama', plano: 'anexoPlano', protocolo: 'anexoProtocolo' }[partes[1]];
+    if (!prefijo) return null;
+    return { bookmark: `${prefijo}${info.numero}`, frase: fraseVinculoWord(tipo, info.numero) };
+  }
+  if (Object.prototype.hasOwnProperty.call(mapaNumerosPrep, ref)) {
+    const numero = mapaNumerosPrep[ref];
+    return { bookmark: `imgPrep${numero}`, frase: fraseVinculoWord('fotoPrep', numero) };
+  }
+  if (Object.prototype.hasOwnProperty.call(mapaNumerosParada, ref)) {
+    const numero = mapaNumerosParada[ref];
+    return { bookmark: `imgParada${numero}`, frase: fraseVinculoWord('fotoParada', numero) };
+  }
+  return null;
+}
+
 // ---- Bloque "REGISTRO FOTOGRÁFICO": clon EXACTO de cómo la plantilla real
 // arma cada par de fotos — mapeado directo desde el documento real, no
 // inventado. Cada par vive en su PROPIA tabla chica de 2 columnas (FECHA con
@@ -1850,45 +1987,60 @@ function buildDrawingXmlWord(rId, cx, cy, docPrId) {
 const REGISTRO_FOTOS_ANCLA = 'REGISTRO FOTOGR';
 const REGISTRO_FOTOS_TC_ANCHO = 5102; // twips — mitad de la tabla del par (10204), ≈9cm
 
+// w:cantSplit en las 4 filas del par: evita que Word corte una foto (o la
+// fila de fecha/descripción) a la mitad entre dos páginas — si la fila no
+// entera en el espacio que queda, la empuja completa a la página siguiente
+// en vez de partirla.
 function buildFilaFechaRegistroWord(fechaTexto) {
   const pid = randParaIdWord();
-  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10204" w:type="dxa"/><w:gridSpan w:val="2"/><w:shd w:val="clear" w:color="auto" w:fill="F2DBDB"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr><w:t xml:space="preserve">FECHA: ${escXmlWord(fechaTexto)}</w:t></w:r></w:p></w:tc></w:tr>`;
+  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10204" w:type="dxa"/><w:gridSpan w:val="2"/><w:shd w:val="clear" w:color="auto" w:fill="F2DBDB"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr><w:t xml:space="preserve">FECHA: ${escXmlWord(fechaTexto)}</w:t></w:r></w:p></w:tc></w:tr>`;
 }
 
 function buildFilaImagenHeaderWord(numA, numB) {
   const pid = randParaIdWord();
   const celda = (num) => `<w:tc><w:tcPr><w:tcW w:w="${REGISTRO_FOTOS_TC_ANCHO}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="92D050"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr></w:pPr>${num ? `<w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr><w:t xml:space="preserve">IMAGEN ${num}</w:t></w:r>` : ''}</w:p></w:tc>`;
-  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr>${celda(numA)}${celda(numB)}</w:tr>`;
+  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr>${celda(numA)}${celda(numB)}</w:tr>`;
 }
 
 // marcaA / marcaB (solo editor): texto ⟦FOTO:...⟧ en un párrafo aparte, antes
 // de la foto, que la pantalla convierte en "＋ Añadir foto" o en la ✕.
-function buildFilaFotoWord(drawingXmlA, drawingXmlB, marcaA, marcaB) {
+// prefijoBookmark+numA/numB (opcionales): le ponen a cada foto un bookmark
+// "imgPrepN"/"imgParadaN" para que un párrafo en otra parte del documento
+// pueda enlazarla (ver buildCorridaHipervinculoWord).
+function buildFilaFotoWord(drawingXmlA, drawingXmlB, marcaA, marcaB, prefijoBookmark, numA, numB) {
   const pid = randParaIdWord();
-  const celda = (drawingXml, marca) => `<w:tc><w:tcPr><w:tcW w:w="${REGISTRO_FOTOS_TC_ANCHO}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${marca ? buildMarcaEditorWord(marca) : ''}<w:p><w:pPr><w:pStyle w:val="Contenido"/><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/></w:rPr></w:pPr>${drawingXml ? `<w:r>${drawingXml}</w:r>` : ''}</w:p></w:tc>`;
-  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:trHeight w:val="3969"/><w:jc w:val="center"/></w:trPr>${celda(drawingXmlA, marcaA)}${celda(drawingXmlB, marcaB)}</w:tr>`;
+  const celda = (drawingXml, marca, num) => {
+    const bm = (prefijoBookmark && num) ? buildBookmarkWordInline(`${prefijoBookmark}${num}`) : null;
+    return `<w:tc><w:tcPr><w:tcW w:w="${REGISTRO_FOTOS_TC_ANCHO}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>${marca ? buildMarcaEditorWord(marca) : ''}<w:p><w:pPr><w:pStyle w:val="Contenido"/><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/></w:rPr></w:pPr>${bm ? bm.start : ''}${drawingXml ? `<w:r>${drawingXml}</w:r>` : ''}${bm ? bm.end : ''}</w:p></w:tc>`;
+  };
+  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:trHeight w:val="${INFORME_FOTO_TRHEIGHT_TWIPS}"/><w:jc w:val="center"/></w:trPr>${celda(drawingXmlA, marcaA, numA)}${celda(drawingXmlB, marcaB, numB)}</w:tr>`;
 }
 
 function buildFilaDescripcionRegistroWord(descA, descB) {
   const pid = randParaIdWord();
   const celda = (desc) => `<w:tc><w:tcPr><w:tcW w:w="${REGISTRO_FOTOS_TC_ANCHO}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="D9CECE"/></w:tcPr><w:p><w:pPr><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Calibri" w:hAnsi="Century Gothic"/><w:b/><w:bCs/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Calibri" w:hAnsi="Century Gothic"/><w:b/><w:bCs/></w:rPr><w:t>Descripción:</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Calibri" w:hAnsi="Century Gothic"/><w:bCs/></w:rPr></w:pPr>${desc ? `<w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Calibri" w:hAnsi="Century Gothic"/><w:bCs/></w:rPr><w:t xml:space="preserve">${escXmlWord(desc)}</w:t></w:r>` : ''}</w:p></w:tc>`;
-  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:trHeight w:val="1138"/><w:jc w:val="center"/></w:trPr>${celda(descA)}${celda(descB)}</w:tr>`;
+  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:trHeight w:val="1138"/><w:jc w:val="center"/></w:trPr>${celda(descA)}${celda(descB)}</w:tr>`;
 }
 
 // La tabla CHICA completa de un par (FECHA + IMAGEN N/N+1 + foto + descripción)
 // — clon exacto de tblPr/tblGrid que ya usa la plantilla para esto.
-function buildTablaParWord(fechaTexto, numA, numB, drawingXmlA, drawingXmlB, descA, descB, marcasFoto) {
-  return `<w:tbl><w:tblPr><w:tblStyle w:val="Tablaconcuadrcula"/><w:tblW w:w="10204" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid><w:gridCol w:w="${REGISTRO_FOTOS_TC_ANCHO}"/><w:gridCol w:w="${REGISTRO_FOTOS_TC_ANCHO}"/></w:tblGrid>${buildFilaFechaRegistroWord(fechaTexto)}${buildFilaImagenHeaderWord(numA, numB)}${buildFilaFotoWord(drawingXmlA, drawingXmlB, marcasFoto && marcasFoto[0], marcasFoto && marcasFoto[1])}${buildFilaDescripcionRegistroWord(descA, descB)}</w:tbl>`;
+function buildTablaParWord(fechaTexto, numA, numB, drawingXmlA, drawingXmlB, descA, descB, marcasFoto, prefijoBookmark) {
+  return `<w:tbl><w:tblPr><w:tblStyle w:val="Tablaconcuadrcula"/><w:tblW w:w="10204" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid><w:gridCol w:w="${REGISTRO_FOTOS_TC_ANCHO}"/><w:gridCol w:w="${REGISTRO_FOTOS_TC_ANCHO}"/></w:tblGrid>${buildFilaFechaRegistroWord(fechaTexto)}${buildFilaImagenHeaderWord(numA, numB)}${buildFilaFotoWord(drawingXmlA, drawingXmlB, marcasFoto && marcasFoto[0], marcasFoto && marcasFoto[1], prefijoBookmark, numA, numB)}${buildFilaDescripcionRegistroWord(descA, descB)}</w:tbl>`;
 }
 
-// La fila EXTERNA que envuelve la tabla chica de un par — clon exacto de la
-// fila contenedora real: 2 párrafos en blanco (el espacio entre pares) y
-// después la tabla chica. Esta fila se agrega como hermana de las que ya
-// existen, dentro de la tabla grande que las contiene a todas.
+// La fila EXTERNA que envuelve la tabla chica de un par: un solo párrafo en
+// blanco de separación (antes eran 3 — 2 antes + 1 después — y con las fotos
+// de 7cm de alto eso alcanzaba para que solo entrara 1 fila por hoja; con
+// fotos de INFORME_FOTO_MAX_ALTO_CM ahora entran 3 filas/6 fotos por hoja) y
+// después la tabla chica. w:cantSplit en la fila EXTERNA evita que Word
+// separe el par (fecha/imagen/foto/descripción) en dos páginas distintas —
+// si no entra completo en lo que queda de la hoja, pasa entero a la
+// siguiente. Esta fila se agrega como hermana de las que ya existen, dentro
+// de la tabla grande que las contiene a todas.
 function buildFilaExternaParWord(tablaParXml) {
   const pid = randParaIdWord();
   const blank = () => `<w:p w14:paraId="${randParaIdWord()}" w14:textId="${randParaIdWord()}"><w:pPr><w:rPr><w:u w:val="single"/></w:rPr></w:pPr></w:p>`;
-  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10704" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr>${blank()}${blank()}${tablaParXml}${blank()}</w:tc></w:tr>`;
+  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10704" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr>${blank()}${tablaParXml}</w:tc></w:tr>`;
 }
 
 // Recibe la lista de fotos ya incrustadas (en orden, cada una con su fecha) y
@@ -1939,7 +2091,7 @@ function buildBloqueRegistroFotosWord(fotosEmbebidas, modoEditor) {
       a.fechaTexto + (modoEditor ? marcaQuitarParFotos(a, b) : ''), contador + 1, (b || modoEditor) ? contador + 2 : null,
       a.drawingXml, b ? b.drawingXml : null,
       ed ? ed.descA : a.descripcion, ed ? ed.descB : (b ? b.descripcion : null),
-      ed ? ed.marcas : null
+      ed ? ed.marcas : null, 'imgParada'
     );
     out += buildFilaExternaParWord(tablaPar);
 
@@ -1959,16 +2111,18 @@ function buildFilaMarcaEditorWord(texto) {
 // La sección "REGISTRO FOTOGRÁFICO EN PERIODO DE PREPARATIVOS" NO usa la
 // misma estructura que la de parada (tabla grande con una fila por par) —
 // mapeado de la plantilla real: ahí cada tabla chica de par va SUELTA,
-// directo en el cuerpo del documento, separada de la siguiente por 3
-// párrafos (uno en blanco, uno con salto de página, otro en blanco), sin
-// ninguna tabla ni fila que las envuelva. Por eso necesita su propio
-// separador y su propio armador de bloque — reutiliza igual buildTablaParWord.
+// directo en el cuerpo del documento, sin ninguna tabla ni fila que las
+// envuelva. Antes esto llevaba un salto de página FORZADO antes de CADA par
+// (incluido el primero, justo después del título) — eso dejaba una hoja casi
+// vacía (con el título solo) cada vez y, después, una sola fila de fotos por
+// hoja aunque sobrara espacio. Ahora es solo un párrafo en blanco de
+// separación (igual que en el registro de parada) y es Word quien decide
+// sola cuándo pasar de página, según lo que realmente entra — con las fotos
+// más chicas (INFORME_FOTO_MAX_ALTO_CM) entran 3 filas/6 fotos por hoja.
 function buildSeparadorRegistroFotosPreparativosWord() {
-  const p1 = randParaIdWord(), p2 = randParaIdWord(), p3 = randParaIdWord();
+  const p1 = randParaIdWord();
   const rPr = '<w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/></w:rPr>';
-  return `<w:p w14:paraId="${p1}" w14:textId="${p1}"><w:pPr>${rPr}</w:pPr></w:p>`
-    + `<w:p w14:paraId="${p2}" w14:textId="${p2}"><w:pPr>${rPr}</w:pPr><w:r>${rPr}<w:br w:type="page"/></w:r></w:p>`
-    + `<w:p w14:paraId="${p3}" w14:textId="${p3}"><w:pPr>${rPr}</w:pPr></w:p>`;
+  return `<w:p w14:paraId="${p1}" w14:textId="${p1}"><w:pPr>${rPr}</w:pPr></w:p>`;
 }
 
 function buildBloqueRegistroFotosPreparativosWord(fotosEmbebidas, modoEditor) {
@@ -1986,7 +2140,7 @@ function buildBloqueRegistroFotosPreparativosWord(fotosEmbebidas, modoEditor) {
       a.fechaTexto + (modoEditor ? marcaQuitarParFotos(a, b) : ''), contador + 1, (b || modoEditor) ? contador + 2 : null,
       a.drawingXml, b ? b.drawingXml : null,
       ed ? ed.descA : a.descripcion, ed ? ed.descB : (b ? b.descripcion : null),
-      ed ? ed.marcas : null
+      ed ? ed.marcas : null, 'imgPrep'
     );
 
     contador += b ? 2 : 1;
@@ -2088,13 +2242,15 @@ function parsearHerramientasTexto(texto) {
 }
 
 // textoPropio: la conclusión que el usuario escribió para esta actividad
-// (informe.conclusiones[otNum]); si no hay, se arma sola con los datos reales.
-function buildFilaConclusionWord(ot, textoPropio, modoEditor) {
+// (informe.conclusiones[otNum]); si no hay, se arma sola con los datos
+// reales. Ya no lleva su propia marca de edición individual — se edita
+// junto con el resto desde "✎ Editar conclusiones" (dialogoEditarConclusiones).
+function buildFilaConclusionWord(ot, textoPropio) {
   const otTexto = ot.tipo === 'Emergente' ? 'EMERGENTE' : ot.otNum;
   const texto = (textoPropio && textoPropio.trim()) || generarConclusionTextoOt(ot);
   return buildFilaItemTextoWord(CONCLUSIONES_NUM_ID, [
     { text: `OT: ${otTexto} | ${tituloSinEquipo(ot.descripcion).toUpperCase()}`, bold: true },
-    { text: texto + (modoEditor ? ` ⟦EDIT:concl:${ot.otNum}⟧` : ''), bold: false },
+    { text: texto, bold: false },
   ]);
 }
 
@@ -2637,6 +2793,39 @@ async function generateInformeWordBlob(informe, opciones = {}) {
     .map((n) => allOts().find((o) => String(o.otNum) === String(n)))
     .filter(Boolean);
 
+  // ---- Vínculos "Ver imagen N…": los párrafos (pasos de actividad, líneas
+  // de preparativos) pueden llevar un link guardado en informe.vinculos hacia
+  // una foto/anexo. Para armar ese link hace falta saber, de antemano, qué
+  // número de "IMAGEN N" le va a tocar a cada foto — así que ese número se
+  // calcula ACÁ (con el mismo orden/emparejado que usan más abajo las
+  // secciones reales de fotos y anexos), sin bajar ninguna imagen todavía,
+  // para que esté listo cuando el texto de "ACTIVIDADES REALIZADAS" y
+  // "PREPARATIVOS" (que van antes en el documento) lo necesiten.
+  const otNumsVinculos = new Set(ots.map((o) => String(o.otNum)));
+  const entradasParaVinculos = state.bitacora
+    .filter((b) => otNumsVinculos.has(String(b.otNum)))
+    .sort((a, b) => (a.turnoIdx ?? 0) - (b.turnoIdx ?? 0) || (a.createdAt || 0) - (b.createdAt || 0));
+  const mapaNumerosParada = calcularNumerosFotosPar(
+    entradasParaVinculos.flatMap((entry) => (entry.fotos || [])
+      .filter((foto) => opciones.modoEditor || foto.url || (foto.descripcion || '').trim())
+      .map((foto, fotoIdx) => ({ fechaTexto: fechaDDMMYYYY(entry.fecha), grupo: entry.id, ref: `e:${entry.id}~${fotoIdx}` })))
+  );
+  const mapaNumerosPrep = calcularNumerosFotosPar(
+    (informe.preparativosFotos || [])
+      .filter((foto) => opciones.modoEditor || foto.url || (foto.descripcion || '').trim())
+      .map((foto, idx) => ({ fechaTexto: foto.fecha ? fechaDDMMYYYY(foto.fecha) : '', grupo: 'prep', ref: `p:${idx}` }))
+  );
+  const mapaNumerosAnexos = {};
+  {
+    const porCategoriaPre = {};
+    ANEXOS_CATEGORIAS.forEach((c) => { porCategoriaPre[c.id] = []; });
+    (informe.anexos || []).forEach((a, i) => (porCategoriaPre[a.categoria] || porCategoriaPre.diagrama).push(i));
+    ANEXOS_CATEGORIAS.forEach((cat) => {
+      porCategoriaPre[cat.id].forEach((origIdx, pos) => { mapaNumerosAnexos[`anexo:${cat.id}:${origIdx}`] = { numero: pos + 1 }; });
+    });
+  }
+  const vinculosCtx = { vinculos: informe.vinculos || {}, mapaNumerosPrep, mapaNumerosParada, mapaNumerosAnexos };
+
   // ---- "CUMPLIMIENTO MECÁNICO SOBRE ACTIVIDADES": encabezado (ya trae la
   // plantilla) → párrafo de introducción (ya trae la plantilla) → tabla
   // TAG/OT/DESCRIPCIÓN/% EJECUCIÓN + torta (esto sí se arma nuevo) → recién
@@ -2762,7 +2951,12 @@ async function generateInformeWordBlob(informe, opciones = {}) {
   // fotos sueltas que se cargaron para preparativos (no vienen por turno/OT
   // como la bitácora, así que se arma como un solo bloque). ----
   try {
-    const prepTextoRaw = (informe.preparativosTexto || []).filter((b) => b && b.trim());
+    // "Se llevó a cabo la charla de seguridad." es fijo y siempre va primero;
+    // lo que el usuario escribe con "Editar actividades y fechas de
+    // preparativos" (ej. "Se realizó el cambio de polea telescópica...")
+    // sigue debajo, tal cual lo cargó.
+    const prepTextoUsuario = (informe.preparativosTexto || []).filter((b) => b && b.trim());
+    const prepTextoRaw = ['Se llevó a cabo la charla de seguridad.', ...prepTextoUsuario];
     const prepFotos = informe.preparativosFotos || [];
 
     const prepAnclaIdx = xml.indexOf(PREPARATIVOS_TABLA_ANCLA);
@@ -2774,18 +2968,16 @@ async function generateInformeWordBlob(informe, opciones = {}) {
     const prepTblEndIdx = xml.indexOf('</w:tbl>', prepAnclaIdx);
     if (prepTblEndIdx === -1) throw new Error('No se pudo ubicar el cierre de la tabla de actividades de preparativos.');
 
+    // El rango de fechas de la etapa cubre TODAS las fechas de preparativos:
+    // la inicial y final escritas a mano y las de cada fila de fotos.
     let prepRowsXml = '';
-    if (prepTextoRaw.length) {
-      // El rango de fechas de la etapa cubre TODAS las fechas de preparativos:
-      // la inicial y final escritas a mano y las de cada fila de fotos.
-      const hoyISO = new Date().toISOString().slice(0, 10);
-      const fechasPrep = [informe.preparativosFechaIni, informe.preparativosFechaFin, ...prepFotos.map((f) => f.fecha)]
-        .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f || '')).sort();
-      const iniISO = fechasPrep.length ? fechasPrep[0] : hoyISO;
-      const finISO = fechasPrep.length ? fechasPrep[fechasPrep.length - 1] : '';
-      prepRowsXml += buildFilaFechaWord(finISO && finISO !== iniISO ? `${fechaDDMMYYYY(iniISO)} AL ${fechaDDMMYYYY(finISO)}` : fechaDDMMYYYY(iniISO));
-      prepRowsXml += buildFilaTurnoWord('PREPARATIVOS', [{ titulo: 'Actividades de preparativos', bullets: prepTextoRaw }], false);
-    }
+    const hoyISO = new Date().toISOString().slice(0, 10);
+    const fechasPrep = [informe.preparativosFechaIni, informe.preparativosFechaFin, ...prepFotos.map((f) => f.fecha)]
+      .filter((f) => /^\d{4}-\d{2}-\d{2}$/.test(f || '')).sort();
+    const iniISO = fechasPrep.length ? fechasPrep[0] : hoyISO;
+    const finISO = fechasPrep.length ? fechasPrep[fechasPrep.length - 1] : '';
+    prepRowsXml += buildFilaFechaWord(finISO && finISO !== iniISO ? `${fechaDDMMYYYY(iniISO)} AL ${fechaDDMMYYYY(finISO)}` : fechaDDMMYYYY(iniISO));
+    prepRowsXml += buildFilaTurnoWord('PREPARATIVOS', [{ titulo: 'Actividades de preparativos', bullets: prepTextoRaw, linkKeyBase: 'prep' }], false, opciones.modoEditor, vinculosCtx);
     if (opciones.modoEditor) prepRowsXml += buildFilaFechaWord('', '⟦EDIT:prep⟧');
     const bookmarksHuerfanosPrep = extraerBookmarkEndsHuerfanos(xml.slice(prepHeaderRowEndIdx, prepTblEndIdx));
     xml = xml.slice(0, prepHeaderRowEndIdx) + prepRowsXml + bookmarksHuerfanosPrep + xml.slice(prepTblEndIdx);
@@ -2892,21 +3084,28 @@ async function generateInformeWordBlob(informe, opciones = {}) {
   entradas.sort((a, b) => (a.entry.turnoIdx ?? 0) - (b.entry.turnoIdx ?? 0) || (a.entry.createdAt || 0) - (b.entry.createdAt || 0));
 
   // ---- 1) Texto: arma las filas de la tabla "ACTIVIDADES REALIZADAS..." ----
+  // Cada turno (1 fila) lleva SIEMPRE, primero, el checklist fijo de
+  // seguridad (checklistTurnoWord) — por eso se recorren TODAS las entradas
+  // (no solo las que ya tienen un paso escrito): un turno agregado con
+  // "+ Día" ya es real aunque su actividad todavía no tenga texto propio, y
+  // el checklist es contenido válido por sí solo. Los pasos por
+  // actividad/OT sí se siguen filtrando uno por uno (un paso vacío no se
+  // muestra, salvo en el editor).
   let rowsXml = '';
   let lastFecha = null, lastTurnoKey = null, buffer = [], bufferEsSegundoTurnoDelDia = false;
+  let bufferTurnoLabel = null, bufferTurnoIdx = null, turnoOrdinal = 0;
   const flush = () => {
-    if (!buffer.length) return;
-    rowsXml += buildFilaTurnoWord(buffer[0].turnoLabel, buffer, bufferEsSegundoTurnoDelDia, opciones.modoEditor);
+    if (bufferTurnoIdx === null) return;
+    const horaBloqueo = (informe.turnoBloqueoHoras || {})[bufferTurnoIdx];
+    if (!opciones.modoEditor && !(horaBloqueo && horaBloqueo.trim())) {
+      throw new Error(`Falta la hora del bloqueo del "${bufferTurnoLabel}" — ábrelo en "Editar como documento", tócalo y complétala antes de descargar el Word.`);
+    }
+    const checklist = checklistTurnoWord(turnoOrdinal, bufferTurnoIdx, horaBloqueo, opciones.modoEditor);
+    rowsXml += buildFilaTurnoWord(bufferTurnoLabel, [checklist, ...buffer], bufferEsSegundoTurnoDelDia, opciones.modoEditor, vinculosCtx);
     buffer = [];
+    bufferTurnoIdx = null;
   };
-  // Las entradas que solo traen fotos (filas de fotos) no son "actividades del
-  // día": van únicamente en el registro fotográfico. Un paso vacío (recién
-  // creado desde el editor) solo cuenta en el editor.
-  const entradasTexto = entradas.filter(({ entry }) => {
-    const bs = entry.bullets || [];
-    return opciones.modoEditor ? bs.length > 0 : bs.some((b) => b && b.trim());
-  });
-  entradasTexto.forEach(({ ot, entry }) => {
+  entradas.forEach(({ ot, entry }) => {
     const fechaTexto = fechaDDMMYYYY(entry.fecha);
     const turnoKey = fechaTexto + '|' + (entry.turnoTipo || '');
     if (turnoKey !== lastTurnoKey) {
@@ -2918,14 +3117,21 @@ async function generateInformeWordBlob(informe, opciones = {}) {
       lastFecha = fechaTexto;
       lastTurnoKey = turnoKey;
       bufferEsSegundoTurnoDelDia = esMismaFechaQueAnterior;
+      bufferTurnoLabel = entry.turnoTipo === 'Día' ? 'TURNO DÍA' : 'TURNO NOCHE';
+      bufferTurnoIdx = entry.turnoIdx;
+      turnoOrdinal++;
     }
-    buffer.push({
-      id: entry.id,
-      turnoLabel: entry.turnoTipo === 'Día' ? 'TURNO DÍA' : 'TURNO NOCHE',
-      // Solo el nombre de la tarea (sin el número de OT).
-      titulo: ot.descripcion,
-      bullets: entry.bullets || [],
-    });
+    const bs = entry.bullets || [];
+    const tieneContenido = opciones.modoEditor ? bs.length > 0 : bs.some((b) => b && b.trim());
+    if (tieneContenido) {
+      buffer.push({
+        id: entry.id,
+        // Solo el nombre de la tarea (sin el número de OT).
+        titulo: ot.descripcion,
+        bullets: bs,
+        linkKeyBase: `paso:${entry.id}`,
+      });
+    }
   });
   flush();
   // Reemplaza al "AÑADIR NUEVA VENTANA" de la plantilla: en el editor, una
@@ -3093,6 +3299,10 @@ async function generateInformeWordBlob(informe, opciones = {}) {
         }
         nuevoXml += buildTituloAnexoWord(cat, hayContenidoPrevio);
         hayContenidoPrevio = true;
+        // Bookmark para que un párrafo en otra parte del documento pueda
+        // enlazar directo a este anexo (ver buildCorridaHipervinculoWord) —
+        // mismo prefijo que usa resolverVinculoTextoWord para resolverlo.
+        const prefijoBookmarkAnexo = { diagrama: 'anexoDiagrama', plano: 'anexoPlano', protocolo: 'anexoProtocolo' }[cat.id];
         let numero = 0;
         for (const [k, anexo] of lista.entries()) {
           numero++;
@@ -3109,7 +3319,7 @@ async function generateInformeWordBlob(informe, opciones = {}) {
               const rId = `rId${nextRid++}`;
               zip.file(`word/media/${nombreArchivo}`, pg.bytes);
               nuevasRelsXml += `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${nombreArchivo}"/>`;
-              nuevoXml += buildImagenAnexoWord(buildDrawingXmlWord(rId, pg.cx, pg.cy, 700000 + contadorImagen), k > 0 || j > 0);
+              nuevoXml += buildImagenAnexoWord(buildDrawingXmlWord(rId, pg.cx, pg.cy, 700000 + contadorImagen), k > 0 || j > 0, j === 0 ? `${prefijoBookmarkAnexo}${numero}` : null);
             }
             const extra = pdfPaginas.total > pdfPaginas.paginas.length ? ` (se muestran las primeras ${pdfPaginas.paginas.length} de ${pdfPaginas.total} páginas)` : '';
             nuevoXml += buildLeyendaAnexoWord(cat.etiqueta, numero, texto + extra, marca);
@@ -3122,7 +3332,7 @@ async function generateInformeWordBlob(informe, opciones = {}) {
             const rId = `rId${nextRid++}`;
             zip.file(`word/media/${nombreArchivo}`, preparada.bytes);
             nuevasRelsXml += `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${nombreArchivo}"/>`;
-            nuevoXml += buildImagenAnexoWord(buildDrawingXmlWord(rId, preparada.cx, preparada.cy, 700000 + contadorImagen), k > 0);
+            nuevoXml += buildImagenAnexoWord(buildDrawingXmlWord(rId, preparada.cx, preparada.cy, 700000 + contadorImagen), k > 0, `${prefijoBookmarkAnexo}${numero}`);
             nuevoXml += buildLeyendaAnexoWord(cat.etiqueta, numero, texto, marca);
           } else {
             const aviso = esImagen ? `${texto} (no se pudo cargar la imagen)` : `${texto} (documento ${anexo.nombre || ''} — se adjunta aparte)`;
@@ -3263,7 +3473,7 @@ async function generateInformeWordBlob(informe, opciones = {}) {
       const tblEndConclusiones = xml.indexOf('</w:tbl>', tblStart);
       if (headerRowEndConclusiones !== -1 && tblEndConclusiones !== -1) {
         const conclusionesPropias = informe.conclusiones || {};
-        const filasConclusiones = ots.map((ot) => buildFilaConclusionWord(ot, conclusionesPropias[ot.otNum], opciones.modoEditor)).join('');
+        const filasConclusiones = ots.map((ot) => buildFilaConclusionWord(ot, conclusionesPropias[ot.otNum])).join('');
         // El ejemplo real de la plantilla (conclusiones de OTRO informe) se
         // BORRA — solo quedan el encabezado + las actividades de este informe.
         const bookmarksHuerfanosConcl = extraerBookmarkEndsHuerfanos(xml.slice(headerRowEndConclusiones, tblEndConclusiones));
@@ -3812,9 +4022,10 @@ const HOTSPOTS_EDITOR = {
   paso: (r) => { const i = r.lastIndexOf(':'); dialogoEditarPaso(r.slice(0, i), Number(r.slice(i + 1))); },
   ot: (id) => dialogoEditarActividadDia(id),
   turno: (ids) => dialogoEditarTurno(ids.split('|')),
+  bloqueo: (turnoIdx) => dialogoEditarHoraBloqueo(turnoIdx),
+  link: (clave) => dialogoEditarVinculoParrafo(clave),
   fechadia: (iso) => dialogoEditarFechaDia(iso),
   fechafila: (refs) => dialogoEditarFechaFila(refs.split('|')),
-  concl: (otNum) => dialogoEditarConclusion(otNum),
   comp: (id) => dialogoEditarComponente(id),
   reco: (otNum) => dialogoEditarRecomendacion(otNum),
   recotitulo: (otNum) => dialogoCambiarActividadRecomendacion(otNum),
@@ -4024,19 +4235,29 @@ async function anadirPasoDirecto(id) {
 function dialogoEditarPaso(id, idx) {
   const e = entradaBitacoraPorId(id);
   if (!e) return;
+  const informe = state.informeActivo;
+  const claveVinculo = `paso:${id}:${idx}`;
+  const vinculoActual = (informe.vinculos || {})[claveVinculo];
+  const destinos = calcularVinculosDisponibles(informe);
   abrirDialogoEditor({
     titulo: 'Paso de la actividad',
-    campos: [{ id: 't', tipo: 'textarea', etiqueta: 'Paso', filas: 3, valor: (e.bullets || [])[idx] || '' }],
+    campos: [
+      { id: 't', tipo: 'textarea', etiqueta: 'Paso', filas: 3, valor: (e.bullets || [])[idx] || '' },
+      { id: 'link', tipo: 'select', etiqueta: 'Vincular a una imagen (opcional)', valor: vinculoActual ? vinculoActual.ref : '',
+        opciones: [{ valor: '', texto: '(sin vínculo)' }, ...destinos.map((d) => ({ valor: d.ref, texto: d.etiqueta }))] },
+    ],
     accionExtra: {
       texto: 'Eliminar paso',
       fn: async () => {
         await guardarPasosEntrada(e, (e.bullets || []).filter((_, i) => i !== idx));
+        await guardarVinculoParrafo(claveVinculo, '');
         await refrescarVistaInteractiva();
       },
     },
     onGuardar: async (v) => {
       const bullets = (e.bullets || []).map((b, i) => (i === idx ? v.t.trim() : b));
       await bitacoraCollection().doc(id).update({ bullets });
+      await guardarVinculoParrafo(claveVinculo, v.link);
       await refrescarVistaInteractiva();
     },
   });
@@ -4084,6 +4305,97 @@ function dialogoEditarTurno(ids) {
   });
 }
 
+// Hora del bloqueo del checklist fijo de un turno (ver checklistTurnoWord) —
+// se guarda en el informe (no en la bitácora) porque es un dato del turno
+// completo, no de una actividad/OT en particular.
+async function guardarHoraBloqueoTurno(turnoIdx, hora) {
+  const informe = state.informeActivo;
+  if (!informe) return;
+  await informesCollection().doc(informe.id).update({ [`turnoBloqueoHoras.${turnoIdx}`]: hora });
+  informe.turnoBloqueoHoras = { ...(informe.turnoBloqueoHoras || {}), [String(turnoIdx)]: hora };
+}
+
+function dialogoEditarHoraBloqueo(turnoIdx) {
+  const informe = state.informeActivo;
+  if (!informe) return;
+  const actual = (informe.turnoBloqueoHoras || {})[turnoIdx] || '';
+  abrirDialogoEditor({
+    titulo: 'Hora del bloqueo',
+    campos: [{ id: 'hora', tipo: 'time', etiqueta: 'Hora en que se realizó el bloqueo', valor: actual }],
+    onGuardar: async (v) => {
+      if (!v.hora) return 'Ingresa una hora';
+      await guardarHoraBloqueoTurno(turnoIdx, v.hora);
+      await refrescarVistaInteractiva();
+    },
+  });
+}
+
+// ---- Vínculos "Ver imagen N…": lista de imágenes ya cargadas en ESTE
+// informe (fotos de preparativos, fotos de parada por OT, anexos) para
+// elegir en el selector — el número de "Imagen N" que se muestra es una
+// VISTA PREVIA, calculada igual que en generateInformeWordBlob (mismo orden
+// y emparejado), así que coincide con lo que va a salir en el Word.
+function calcularVinculosDisponibles(informe) {
+  const out = [];
+  const prepConDatos = (informe.preparativosFotos || [])
+    .map((foto, idx) => ({ foto, fechaTexto: foto.fecha ? fechaDDMMYYYY(foto.fecha) : '', grupo: 'prep', ref: `p:${idx}` }))
+    .filter(({ foto }) => foto.url || (foto.descripcion || '').trim());
+  const numPrep = calcularNumerosFotosPar(prepConDatos);
+  prepConDatos.forEach(({ foto, ref }) => {
+    const n = numPrep[ref];
+    if (n) out.push({ ref, etiqueta: `Preparativos — Imagen ${n}${foto.descripcion ? ': ' + foto.descripcion.slice(0, 40) : ''}` });
+  });
+
+  const otNumsSet = new Set((informe.otNums || []).map(String));
+  const entradasOrdenadas = state.bitacora.filter((b) => otNumsSet.has(String(b.otNum)))
+    .sort((a, b) => (a.turnoIdx ?? 0) - (b.turnoIdx ?? 0) || (a.createdAt || 0) - (b.createdAt || 0));
+  const paradaConDatos = entradasOrdenadas.flatMap((entry) => (entry.fotos || [])
+    .map((foto, fotoIdx) => ({ foto, fechaTexto: fechaDDMMYYYY(entry.fecha), grupo: entry.id, ref: `e:${entry.id}~${fotoIdx}` }))
+    .filter(({ foto }) => foto.url || (foto.descripcion || '').trim()));
+  const numParada = calcularNumerosFotosPar(paradaConDatos);
+  paradaConDatos.forEach(({ foto, ref }) => {
+    const n = numParada[ref];
+    if (n) out.push({ ref, etiqueta: `Registro fotográfico — Imagen ${n}${foto.descripcion ? ': ' + foto.descripcion.slice(0, 40) : ''}` });
+  });
+
+  const porCategoria = {};
+  ANEXOS_CATEGORIAS.forEach((c) => { porCategoria[c.id] = []; });
+  (informe.anexos || []).forEach((a, i) => (porCategoria[a.categoria] || porCategoria.diagrama).push({ ...a, _i: i }));
+  ANEXOS_CATEGORIAS.forEach((cat) => {
+    porCategoria[cat.id].forEach((a, pos) => {
+      const detalle = a.descripcion || a.nombre || '';
+      out.push({ ref: `anexo:${cat.id}:${a._i}`, etiqueta: `${cat.etiqueta} ${pos + 1}${detalle ? ': ' + detalle.slice(0, 40) : ''}` });
+    });
+  });
+  return out;
+}
+
+async function guardarVinculoParrafo(clave, ref) {
+  const informe = state.informeActivo;
+  if (!informe) return;
+  const vinculos = { ...(informe.vinculos || {}) };
+  if (ref) vinculos[clave] = { ref }; else delete vinculos[clave];
+  await guardarCampoInformeActivo('vinculos', vinculos);
+}
+
+// Vínculo de un párrafo que NO tiene su propio diálogo de texto (líneas de
+// preparativos, editadas en bloque) — acá es la única forma de tocarlo.
+function dialogoEditarVinculoParrafo(clave) {
+  const informe = state.informeActivo;
+  if (!informe) return;
+  const actual = (informe.vinculos || {})[clave];
+  const destinos = calcularVinculosDisponibles(informe);
+  abrirDialogoEditor({
+    titulo: 'Vincular a una imagen',
+    campos: [{ id: 'ref', tipo: 'select', etiqueta: 'Imagen', valor: actual ? actual.ref : '',
+      opciones: [{ valor: '', texto: '(sin vínculo)' }, ...destinos.map((d) => ({ valor: d.ref, texto: d.etiqueta }))] }],
+    onGuardar: async (v) => {
+      await guardarVinculoParrafo(clave, v.ref);
+      await refrescarVistaInteractiva();
+    },
+  });
+}
+
 // Cambia la fecha de un día completo (todas las actividades con texto de esa fecha).
 function dialogoEditarFechaDia(iso) {
   const otsSet = new Set((state.informeActivo.otNums || []).map(String));
@@ -4108,35 +4420,9 @@ function conclusionActualDeOt(ot) {
   return propia || generarConclusionTextoOt(ot);
 }
 
-async function guardarConclusionPropia(otNum, texto, automatico) {
-  const mapa = { ...(state.informeActivo.conclusiones || {}) };
-  if (!texto.trim() || texto.trim() === automatico.trim()) delete mapa[otNum]; // vuelve a ser automática
-  else mapa[otNum] = texto.trim();
-  await guardarCampoInformeActivo('conclusiones', mapa);
-}
-
-function dialogoEditarConclusion(otNum) {
-  const ot = otsDelInforme(state.informeActivo).find((o) => String(o.otNum) === String(otNum));
-  if (!ot) return;
-  const auto = generarConclusionTextoOt(ot);
-  abrirDialogoEditor({
-    titulo: `Conclusión — ${tituloSinEquipo(ot.descripcion)}`,
-    campos: [{ id: 'c', tipo: 'textarea', etiqueta: 'Conclusión de esta actividad', filas: 6, valor: conclusionActualDeOt(ot) }],
-    accionExtra: {
-      texto: 'Volver al texto automático',
-      fn: async () => {
-        await guardarConclusionPropia(otNum, '', auto);
-        await refrescarVistaInteractiva();
-      },
-    },
-    onGuardar: async (v) => {
-      await guardarConclusionPropia(otNum, v.c, auto);
-      await refrescarVistaInteractiva();
-    },
-  });
-}
-
-// Todas las conclusiones juntas, una casilla por actividad.
+// Todas las conclusiones juntas, una casilla por actividad — es el único
+// punto de edición de conclusiones (ya no hay una marca individual por
+// actividad dentro del documento).
 function dialogoEditarConclusiones() {
   const ots = otsDelInforme(state.informeActivo);
   if (!ots.length) { showToast('Primero elige las actividades del informe'); return; }
@@ -4227,19 +4513,28 @@ function dialogoEditarListaTexto(cual) {
 }
 
 // ---- Recomendaciones: solo las actividades que el usuario decide (informe.
-// recomendaciones[otNum]). "＋ Añadir recomendación" crea de inmediato una fila
-// para la primera actividad que aún no tiene; se toca el texto o el nombre de
-// la actividad para editarlos, y la ✕ la quita. ----
+// recomendaciones[otNum]). "＋ Añadir recomendación" pide primero a qué
+// actividad corresponde (entre las que todavía no tienen una) y el texto, en
+// un solo diálogo; se toca el texto o el nombre de la actividad para
+// editarlos después, y la ✕ la quita. ----
 async function anadirRecomendacionDirecto() {
   const informe = state.informeActivo;
   const ots = otsDelInforme(informe);
   const recs = informe.recomendaciones || {};
-  const libre = ots.find((o) => !Object.prototype.hasOwnProperty.call(recs, o.otNum));
-  if (!libre) { showToast(ots.length ? 'Todas las actividades ya tienen una recomendación' : 'Primero elige las actividades del informe'); return; }
-  await guardarCampoInformeActivo('recomendaciones', { ...recs, [libre.otNum]: '' });
-  editorDestacar = { reco: String(libre.otNum) };
-  await refrescarVistaInteractiva();
-  dialogoEditarRecomendacion(libre.otNum);
+  const libres = ots.filter((o) => !Object.prototype.hasOwnProperty.call(recs, o.otNum));
+  if (!libres.length) { showToast(ots.length ? 'Todas las actividades ya tienen una recomendación' : 'Primero elige las actividades del informe'); return; }
+  abrirDialogoEditor({
+    titulo: 'Nueva recomendación',
+    campos: [
+      { id: 'ot', tipo: 'select', etiqueta: 'Actividad', opciones: libres.map((o) => ({ valor: o.otNum, texto: etiquetaOtEditor(o) })) },
+      { id: 't', tipo: 'textarea', etiqueta: 'Recomendación para esta actividad', filas: 5, valor: '' },
+    ],
+    onGuardar: async (v) => {
+      await guardarCampoInformeActivo('recomendaciones', { ...(state.informeActivo.recomendaciones || {}), [v.ot]: v.t.trim() });
+      editorDestacar = { reco: String(v.ot) };
+      await refrescarVistaInteractiva();
+    },
+  });
 }
 
 function dialogoEditarRecomendacion(otNum) {
@@ -7348,6 +7643,15 @@ document.addEventListener('DOMContentLoaded', () => {
       renderGanttChart();
     });
   }, 'gantt-back');
+
+  // El botón de agregar emergente de la Lista existe siempre en el DOM (solo
+  // se oculta visualmente al pasar a Línea de tiempo) — este reusa el mismo
+  // modal/flujo en vez de duplicarlo.
+  safeInit(() => {
+    document.getElementById('btnAddEmergGantt').addEventListener('click', () => {
+      document.getElementById('btnAddEmerg').click();
+    });
+  }, 'gantt-add-emerg');
 
   safeInit(() => {
     const btn = document.getElementById('btnAddEmerg');

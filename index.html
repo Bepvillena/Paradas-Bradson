@@ -475,6 +475,7 @@
           <div class="gantt-header">
             <h3 id="ganttTitle">Línea de tiempo — Work Pack</h3>
             <button id="ganttBack" class="btn-back" type="button" title="Volver a la Línea de tiempo completa" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+            <button id="btnAddEmergGantt" type="button" title="Añadir actividad emergente">+ Emergente</button>
           </div>
           <div class="gantt-legend">
             <span><i style="background:var(--atiempo)"></i>Cuadrilla (a tiempo)</span>
@@ -739,14 +740,13 @@
   <div class="editor-barra">
     <button type="button" class="btn-back" id="vistaInteractivaCerrar" title="Volver al informe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
     <h2 id="editorTitulo">Editar informe</h2>
-    <span class="editor-estado" id="editorEstado"></span>
-    <div class="editor-barra-acciones">
-      <button type="button" class="btn-mini" id="editorBtnActividades">☑ Actividades</button>
+    <div class="editor-barra-titulo-acciones">
       <button type="button" class="btn-mini btn-mini-primary" id="editorBtnWord">⬇ Word</button>
       <button type="button" class="btn-mini" id="editorBtnPdf">⬇ PDF</button>
     </div>
+    <span class="editor-estado" id="editorEstado"></span>
+    <button type="button" class="btn-mini" id="editorBtnActividades">☑ Actividades</button>
   </div>
-  <p class="editor-ayuda">Toca los bordes punteados para editar. El resto del documento no se puede tocar.</p>
   <div id="vistaInteractivaLoading" class="preview-word-loading">Generando…</div>
   <div id="vistaInteractivaContenedor" class="editor-contenedor"></div>
 </div>
