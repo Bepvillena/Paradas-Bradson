@@ -964,6 +964,12 @@ body.en-inicio nav.tabs{ display:none; }
 .editor-barra-titulo-acciones{ flex:none; display:flex; gap:6px; }
 .editor-estado{ flex:1 1 100%; order:3; min-width:0; font-size:11.5px; color:var(--brand); font-weight:700; }
 .editor-barra #editorBtnActividades{ order:4; }
+/* .btn-mini nace pensado para fondo oscuro (texto blanco) — acá la barra del
+   editor es blanca, así que sin esto "PDF" y "Actividades" quedan blanco
+   sobre blanco (invisibles, pero ocupando su espacio: por eso se veía un
+   hueco vacío al lado de "Word", que sí se ve porque además es -primary). */
+.editor-barra .btn-mini{ color: var(--brand); border-color: var(--brand); }
+.editor-barra .btn-mini-primary{ color: #fff; }
 .editor-pantalla .preview-word-loading{ color:#d8dadc; }
 .editor-contenedor{ flex:1; min-height:0; overflow:auto; padding:16px 0 40px; -webkit-overflow-scrolling:touch; }
 .editor-contenedor .docx-preview-wrapper{ background:transparent !important; padding:0 !important; }

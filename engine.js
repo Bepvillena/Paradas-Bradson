@@ -2040,7 +2040,11 @@ function buildTablaParWord(fechaTexto, numA, numB, drawingXmlA, drawingXmlB, des
 function buildFilaExternaParWord(tablaParXml) {
   const pid = randParaIdWord();
   const blank = () => `<w:p w14:paraId="${randParaIdWord()}" w14:textId="${randParaIdWord()}"><w:pPr><w:rPr><w:u w:val="single"/></w:rPr></w:pPr></w:p>`;
-  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10704" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr>${blank()}${tablaParXml}</w:tc></w:tr>`;
+  // OJO: una celda de tabla (w:tc) SIEMPRE tiene que terminar en un párrafo —
+  // Word declara "corrupto" un documento donde termina en una tabla anidada
+  // (tablaParXml). Por eso el párrafo en blanco de DESPUÉS no es opcional,
+  // aunque solo quede uno de separación (antes eran 2 antes + 1 después).
+  return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:jc w:val="center"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="10704" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr>${blank()}${tablaParXml}${blank()}</w:tc></w:tr>`;
 }
 
 // Recibe la lista de fotos ya incrustadas (en orden, cada una con su fecha) y
@@ -2753,6 +2757,39 @@ async function generateInformeWordBlob(informe, opciones = {}) {
     }
   }
 
+  // ---- FECHA (fila de abajo de la tabla ELABORADO/REVISADO/VALIDADO POR de
+  // la portada): la plantilla real ya trae esta fila con las 3 fechas de
+  // EJEMPLO incompletas (les falta el día — quedan como "/08/2026"), no es
+  // algo que rompió la app. Se reemplaza por la fecha de hoy en las 3
+  // columnas. Cada celda trae el texto partido en varias corridas (día/mes/
+  // año en <w:r> separadas) — se pone el texto completo en la primera y se
+  // vacían las demás para no dejar pedazos sueltos del texto de ejemplo. ----
+  try {
+    const encargadoIdx = xml.indexOf(ENCARGADO_ANCLA);
+    const fechaLabelIdx = encargadoIdx !== -1 ? xml.indexOf('FECHA:', encargadoIdx) : -1;
+    if (fechaLabelIdx !== -1) {
+      const hoyTexto = fechaDDMMYYYY(new Date().toISOString().slice(0, 10));
+      let cursor = xml.indexOf('</w:tc>', fechaLabelIdx) + '</w:tc>'.length;
+      for (let col = 0; col < 3; col++) {
+        const tcStart = xml.indexOf('<w:tc>', cursor);
+        if (tcStart === -1) break;
+        const tcEnd = xml.indexOf('</w:tc>', tcStart) + '</w:tc>'.length;
+        let celda = xml.slice(tcStart, tcEnd);
+        let esLaPrimera = true;
+        celda = celda.replace(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g, (m) => {
+          const aperturaTag = m.slice(0, m.indexOf('>') + 1);
+          const texto = esLaPrimera ? escXmlWord(hoyTexto) : '';
+          esLaPrimera = false;
+          return `${aperturaTag}${texto}</w:t>`;
+        });
+        xml = xml.slice(0, tcStart) + celda + xml.slice(tcEnd);
+        cursor = tcStart + celda.length;
+      }
+    }
+  } catch (e) {
+    console.error('No se pudo agregar la fecha en la portada:', e);
+  }
+
   // ---- Objetivo principal: reemplaza el párrafo de ejemplo (resaltado en
   // amarillo en la plantilla) por el texto propio del informe, o uno
   // generado automáticamente con sus actividades si no se escribió ninguno. ----
@@ -2805,15 +2842,20 @@ async function generateInformeWordBlob(informe, opciones = {}) {
   const entradasParaVinculos = state.bitacora
     .filter((b) => otNumsVinculos.has(String(b.otNum)))
     .sort((a, b) => (a.turnoIdx ?? 0) - (b.turnoIdx ?? 0) || (a.createdAt || 0) - (b.createdAt || 0));
+  // OJO: el índice del ref (p:N / e:id~N) tiene que ser el índice ORIGINAL
+  // dentro de foto.fotos/preparativosFotos (el mismo que usa la sección real
+  // de fotos más abajo) — por eso el .map() con el índice va ANTES del
+  // .filter(), nunca después (si no, un hueco sin foto corre los números de
+  // las fotos que vienen después y el vínculo termina apuntando a otra).
   const mapaNumerosParada = calcularNumerosFotosPar(
     entradasParaVinculos.flatMap((entry) => (entry.fotos || [])
-      .filter((foto) => opciones.modoEditor || foto.url || (foto.descripcion || '').trim())
-      .map((foto, fotoIdx) => ({ fechaTexto: fechaDDMMYYYY(entry.fecha), grupo: entry.id, ref: `e:${entry.id}~${fotoIdx}` })))
+      .map((foto, fotoIdx) => ({ foto, fechaTexto: fechaDDMMYYYY(entry.fecha), grupo: entry.id, ref: `e:${entry.id}~${fotoIdx}` }))
+      .filter(({ foto }) => opciones.modoEditor || foto.url || (foto.descripcion || '').trim()))
   );
   const mapaNumerosPrep = calcularNumerosFotosPar(
     (informe.preparativosFotos || [])
-      .filter((foto) => opciones.modoEditor || foto.url || (foto.descripcion || '').trim())
-      .map((foto, idx) => ({ fechaTexto: foto.fecha ? fechaDDMMYYYY(foto.fecha) : '', grupo: 'prep', ref: `p:${idx}` }))
+      .map((foto, idx) => ({ foto, fechaTexto: foto.fecha ? fechaDDMMYYYY(foto.fecha) : '', grupo: 'prep', ref: `p:${idx}` }))
+      .filter(({ foto }) => opciones.modoEditor || foto.url || (foto.descripcion || '').trim())
   );
   const mapaNumerosAnexos = {};
   {
@@ -3598,7 +3640,20 @@ async function descargarBlob(blob, nombreArchivo) {
         reader.readAsDataURL(blob);
       });
       const { Filesystem, Share, FileOpener } = window.Capacitor.Plugins;
-      const resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'DOCUMENTS' });
+      // El nombre de archivo es siempre el mismo para un mismo informe
+      // (ej. "IT-MCEN-001-SUL.docx") — si el celular ya tiene ese archivo
+      // ABIERTO en otra app (Word, WPS…), esa app puede tener el archivo
+      // bloqueado y volver a escribir encima falla. En vez de quedarse sin
+      // poder descargar de nuevo, si falla se reintenta UNA vez con un
+      // nombre distinto (con hora), que nunca puede estar bloqueado.
+      let resultado;
+      try {
+        resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'DOCUMENTS' });
+      } catch (eEscritura) {
+        console.error('No se pudo guardar con el nombre original (¿archivo abierto en otra app?):', eEscritura);
+        nombreArchivo = nombreArchivo.replace(/(\.[^.]+)$/, `_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}$1`);
+        resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'DOCUMENTS' });
+      }
       showToast(`Guardado en Documentos: ${nombreArchivo}`);
       // Se abre con "Abrir con…" (Word, WPS, visor de PDF…), no con el menú de
       // compartir. Solo si el teléfono no tiene ninguna app para ese archivo
@@ -3618,7 +3673,7 @@ async function descargarBlob(blob, nombreArchivo) {
       }
     } catch (e) {
       console.error('No se pudo guardar el archivo en el dispositivo:', e);
-      showToast('No se pudo guardar el archivo — revisa el espacio disponible');
+      showToast('No se pudo guardar el archivo: ' + ((e && e.message) || 'revisa el espacio disponible'));
     }
     return;
   }
@@ -3991,6 +4046,15 @@ function activarMarcasEditor(informe, cont) {
         btn.className = 'doc-btn-anadir';
         btn.textContent = '✎ Editar conclusiones';
         btn.addEventListener('click', dialogoEditarConclusiones);
+      } else if (tipo === 'EDIT' && sub === 'link') {
+        // Botón chico (no el "párrafo entero con borde punteado" genérico de
+        // HOTSPOTS_EDITOR): ese dejaba una caja gigante sin ningún texto que
+        // explicara qué hacía, y encima envolvía toda la línea de texto real
+        // quitándole legibilidad. Acá se ve como cualquier otro "＋ Añadir".
+        const tieneVinculo = !!(informe.vinculos || {})[resto];
+        btn.className = 'doc-btn-anadir doc-btn-chico';
+        btn.textContent = tieneVinculo ? '🔗 Vínculo a imagen (tocar para cambiar)' : '🔗 Vincular a una imagen';
+        btn.addEventListener('click', (e) => { e.stopPropagation(); dialogoEditarVinculoParrafo(resto); });
       } else if (tipo === 'EDIT') {
         btn.className = 'doc-btn-anadir';
         btn.textContent = '✎ Editar actividades y fechas de preparativos';
@@ -4023,7 +4087,6 @@ const HOTSPOTS_EDITOR = {
   ot: (id) => dialogoEditarActividadDia(id),
   turno: (ids) => dialogoEditarTurno(ids.split('|')),
   bloqueo: (turnoIdx) => dialogoEditarHoraBloqueo(turnoIdx),
-  link: (clave) => dialogoEditarVinculoParrafo(clave),
   fechadia: (iso) => dialogoEditarFechaDia(iso),
   fechafila: (refs) => dialogoEditarFechaFila(refs.split('|')),
   comp: (id) => dialogoEditarComponente(id),
@@ -4207,20 +4270,39 @@ async function guardarPasosEntrada(entrada, bullets) {
   else await bitacoraCollection().doc(entrada.id).update({ bullets });
 }
 
+// Antes creaba de una un turno vacío (siempre "Día", fecha = último+1) y
+// obligaba a escribir los pasos de a uno tocando "+ Añadir paso" cada vez —
+// tedioso para varias líneas. Ahora pide de entrada actividad/fecha/turno
+// (con un turno y fecha ya sugeridos, editables) y los pasos todos juntos
+// en un cuadro de texto (uno por línea, se puede pegar de otro lado).
 async function anadirDiaDirecto() {
   const informe = state.informeActivo;
   const ots = otsDelInforme(informe);
   if (!ots.length) { showToast('Primero elige las actividades del informe (toca la tabla de actividades)'); return; }
-  try {
-    const otsSet = new Set(ots.map((o) => String(o.otNum)));
-    const conTexto = state.bitacora.filter((b) => otsSet.has(String(b.otNum)) && (b.bullets || []).length)
-      .sort((a, b) => (a.turnoIdx ?? 0) - (b.turnoIdx ?? 0));
-    const ultimo = conTexto[conTexto.length - 1];
-    const fecha = ultimo ? fechaISOMasDias(ultimo.fecha, 1) : hoyISOEditor();
-    await bitacoraCollection().add({ ...datosBaseEntradaBitacora(ots[0], fecha, 'Día'), bullets: [''], fotos: [] });
-    editorDestacar = 'dia';
-  } catch (e) { avisarErrorEditor(e, 'No se pudo añadir el día'); }
-  await refrescarVistaInteractiva();
+  const otsSet = new Set(ots.map((o) => String(o.otNum)));
+  const conTexto = state.bitacora.filter((b) => otsSet.has(String(b.otNum)) && (b.bullets || []).length)
+    .sort((a, b) => (a.turnoIdx ?? 0) - (b.turnoIdx ?? 0));
+  const ultimo = conTexto[conTexto.length - 1];
+  const fechaSugerida = ultimo ? ultimo.fecha : hoyISOEditor();
+  const turnoSugerido = ultimo ? (ultimo.turnoTipo === 'Día' ? 'Noche' : 'Día') : 'Día';
+  abrirDialogoEditor({
+    titulo: 'Nuevo turno',
+    campos: [
+      { id: 'ot', tipo: 'select', etiqueta: 'Actividad', opciones: ots.map((o) => ({ valor: o.otNum, texto: etiquetaOtEditor(o) })) },
+      { id: 'fecha', tipo: 'date', etiqueta: 'Fecha', valor: fechaSugerida },
+      { id: 'turno', tipo: 'select', etiqueta: 'Turno', valor: turnoSugerido, opciones: [{ valor: 'Día', texto: 'Día' }, { valor: 'Noche', texto: 'Noche' }] },
+      { id: 'texto', tipo: 'textarea', etiqueta: 'Pasos de esta actividad (uno por línea)', filas: 6, valor: '' },
+    ],
+    onGuardar: async (v) => {
+      const ot = ots.find((o) => String(o.otNum) === String(v.ot));
+      const bullets = (v.texto || '').split('\n').map((s) => s.trim()).filter(Boolean);
+      try {
+        await bitacoraCollection().add({ ...datosBaseEntradaBitacora(ot, v.fecha, v.turno), bullets: bullets.length ? bullets : [''], fotos: [] });
+      } catch (e) { avisarErrorEditor(e, 'No se pudo añadir el turno'); }
+      editorDestacar = 'dia';
+      await refrescarVistaInteractiva();
+    },
+  });
 }
 
 async function anadirPasoDirecto(id) {
