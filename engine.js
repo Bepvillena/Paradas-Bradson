@@ -4954,6 +4954,15 @@ document.addEventListener('DOMContentLoaded', () => {
 // A4 — así el PDF sí queda paginado en A4 reales, igual que se vería
 // impreso el Word. Cada hoja respeta su propia orientación (la mayoría del
 // informe es vertical, la de la Curva S es apaisada).
+//
+// Aunque el contenido de cada hoja es una imagen, el PDF SÍ queda con
+// índice/marcadores e hipervínculos de verdad — docx-preview convierte los
+// bookmarks de Word (los que arma el propio Word para el "CONTENIDO" de la
+// portada, y los que agrega esta app para "Ver imagen N…") en elementos
+// <span id="..."> y <a href="#...">; se miden sus posiciones ANTES de sacar
+// la foto de cada hoja y, ya sabiendo en qué página del PDF quedó cada uno,
+// se agregan como anotaciones de link reales (doc.link) y como entradas del
+// panel de marcadores del lector de PDF (doc.outline).
 async function generateInformeWordPdfBlob(informe) {
   if (typeof window.docx === 'undefined' || !window.docx.renderAsync) {
     throw new Error('El visor de Word no cargó — revisa tu conexión.');
@@ -4978,9 +4987,35 @@ async function generateInformeWordPdfBlob(informe) {
     if (!secciones.length) throw new Error('No se pudo preparar el documento para el PDF.');
     const anchoPortrait = Math.min(...secciones.map((s) => s.getBoundingClientRect().width));
 
-    for (const sec of secciones) {
+    // ---- 1) Medir bookmarks/hipervínculos ANTES de rasterizar — las
+    // posiciones quedan en px CSS relativos a SU sección, que es la misma
+    // unidad que se usa después para cortar cada sección en hojas A4. ----
+    const bookmarksPorNombre = {}; // nombre -> {seccionIdx, xRel, yRel}
+    const hipervinculos = []; // {seccionIdx, xRel, yRel, wRel, hRel, target, texto}
+    secciones.forEach((sec, si) => {
+      const rs = sec.getBoundingClientRect();
+      sec.querySelectorAll('span[id]').forEach((span) => {
+        if (bookmarksPorNombre[span.id]) return;
+        const r = span.getBoundingClientRect();
+        bookmarksPorNombre[span.id] = { seccionIdx: si, xRel: r.left - rs.left, yRel: r.top - rs.top };
+      });
+      sec.querySelectorAll('a[href^="#"]').forEach((a) => {
+        const r = a.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return;
+        hipervinculos.push({
+          seccionIdx: si, xRel: r.left - rs.left, yRel: r.top - rs.top, wRel: r.width, hRel: r.height,
+          target: a.getAttribute('href').slice(1), texto: (a.textContent || '').trim(),
+        });
+      });
+    });
+
+    // ---- 2) Rasterizar y paginar — igual que antes, solo que ahora se
+    // guarda además a qué página(s) del PDF fue a parar cada sección. ----
+    const mapaPaginas = []; // por índice de sección: {altoHojaCss, esApaisada, paginas:[nº,...]} | null
+    for (let si = 0; si < secciones.length; si++) {
+      const sec = secciones[si];
       const rect = sec.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) continue;
+      if (rect.width < 1 || rect.height < 1) { mapaPaginas.push(null); continue; }
       const esApaisada = rect.width > anchoPortrait * 1.2;
       // Alto de UNA hoja A4 real, en los mismos px que está usando esta
       // sección (el ancho de página no cambia aunque el contenido se
@@ -4992,6 +5027,7 @@ async function generateInformeWordPdfBlob(informe) {
       const pxPorCss = canvas.width / rect.width;
       const altoHojaPx = Math.max(1, Math.round(altoHojaCss * pxPorCss));
       const totalHojas = Math.max(1, Math.ceil(canvas.height / altoHojaPx));
+      const paginasDeEstaSeccion = [];
 
       for (let h = 0; h < totalHojas; h++) {
         const altoRecorte = Math.min(altoHojaPx, canvas.height - h * altoHojaPx);
@@ -5006,12 +5042,55 @@ async function generateInformeWordPdfBlob(informe) {
         if (!doc) doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: esApaisada ? 'landscape' : 'portrait' });
         else doc.addPage('a4', esApaisada ? 'landscape' : 'portrait');
         doc.addImage(dataUrl, 'JPEG', 0, 0, pageW, altoMm);
+        paginasDeEstaSeccion.push(doc.getNumberOfPages());
       }
+      mapaPaginas.push({ altoHojaCss, esApaisada, paginas: paginasDeEstaSeccion });
     }
+    if (!doc) throw new Error('No se generó ninguna hoja para el PDF.');
+
+    // Convierte una posición (sección + px CSS relativos a ella) en la
+    // página real del PDF y su X/Y en mm dentro de esa página.
+    function ubicarEnPdf(seccionIdx, xRel, yRel) {
+      const info = mapaPaginas[seccionIdx];
+      if (!info || !info.paginas.length) return null;
+      let indiceHoja = Math.floor(yRel / info.altoHojaCss);
+      indiceHoja = Math.max(0, Math.min(indiceHoja, info.paginas.length - 1));
+      const pageNumber = info.paginas[indiceHoja];
+      const anchoSeccionCss = secciones[seccionIdx].getBoundingClientRect().width;
+      const escala = (info.esApaisada ? 297 : 210) / anchoSeccionCss;
+      return { pageNumber, xMm: xRel * escala, yMm: (yRel - indiceHoja * info.altoHojaCss) * escala, escala };
+    }
+
+    // ---- 3) Hipervínculos clickeables: cada <a href="#X"> se convierte en
+    // un rectángulo invisible sobre la imagen que salta a la página real
+    // donde quedó "X" (una foto, un anexo, o una entrada del índice). ----
+    hipervinculos.forEach(({ seccionIdx, xRel, yRel, wRel, hRel, target }) => {
+      const destino = bookmarksPorNombre[target];
+      if (!destino) return; // el bookmark ya no existe (se borró la foto, etc.)
+      const posDestino = ubicarEnPdf(destino.seccionIdx, destino.xRel, destino.yRel);
+      const posOrigen = ubicarEnPdf(seccionIdx, xRel, yRel);
+      if (!posDestino || !posOrigen) return;
+      doc.setPage(posOrigen.pageNumber);
+      doc.link(posOrigen.xMm, posOrigen.yMm, wRel * posOrigen.escala, hRel * posOrigen.escala,
+        { pageNumber: posDestino.pageNumber, top: posDestino.yMm });
+    });
+
+    // ---- 4) Panel de marcadores del PDF: una entrada por cada renglón del
+    // "CONTENIDO" de la portada (Word les pone un bookmark que empieza con
+    // "_Toc" — son justo los que arma Word solo para su índice). ----
+    hipervinculos
+      .filter((h) => h.target.startsWith('_Toc') && h.texto)
+      .forEach((h) => {
+        const destino = bookmarksPorNombre[h.target];
+        if (!destino) return;
+        const pos = ubicarEnPdf(destino.seccionIdx, destino.xRel, destino.yRel);
+        if (!pos) return;
+        const titulo = h.texto.replace(/\s*\d+\s*$/, '').trim() || h.texto;
+        doc.outline.add(null, titulo, { pageNumber: pos.pageNumber });
+      });
   } finally {
     staging.remove();
   }
-  if (!doc) throw new Error('No se generó ninguna hoja para el PDF.');
   return { blob: doc.output('blob'), nombreArchivo: `${(informe.nombre || 'informe').replace(/[/\\?%*:|"<>]/g, '-')}.pdf` };
 }
 
