@@ -48,19 +48,38 @@
       r.onerror = () => reject(r.error);
     }));
   }
-  function idbPut(storeName, key, value) {
-    return storeTx(storeName, 'readwrite').then((store) => new Promise((resolve, reject) => {
-      const r = store.put(value, key);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
+  function writeTransaction(stores, action) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(stores, 'readwrite');
+      window.dispatchEvent(new CustomEvent('paradas:storage', { detail: { status: 'saving' } }));
+      tx.oncomplete = () => {
+        window.dispatchEvent(new CustomEvent('paradas:storage', { detail: { status: 'saved', at: Date.now() } }));
+        resolve();
+      };
+      tx.onabort = tx.onerror = () => {
+        const error = tx.error || new Error('No se pudo guardar');
+        window.dispatchEvent(new CustomEvent('paradas:storage', { detail: { status: 'error', message: error.message } }));
+        reject(error);
+      };
+      try { action(tx); } catch (e) { tx.abort(); reject(e); }
     }));
   }
+  function idbPut(storeName, key, value) {
+    return writeTransaction([storeName], (tx) => tx.objectStore(storeName).put(value, key));
+  }
   function idbDelete(storeName, key) {
-    return storeTx(storeName, 'readwrite').then((store) => new Promise((resolve, reject) => {
-      const r = store.delete(key);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
-    }));
+    return writeTransaction([storeName], (tx) => tx.objectStore(storeName).delete(key));
+  }
+  function idbMerge(key, data) {
+    // Read and merge in ONE transaction: simultaneous field edits cannot overwrite each other.
+    return writeTransaction([STORE_DOCS], (tx) => {
+      const store = tx.objectStore(STORE_DOCS);
+      const read = store.get(key);
+      read.onsuccess = () => {
+        try { store.put(applyFields(read.result || {}, data), key); }
+        catch (error) { tx.abort(); }
+      };
+    });
   }
   function idbGetAllWithPrefix(storeName, prefix) {
     return storeTx(storeName, 'readonly').then((store) => new Promise((resolve, reject) => {
@@ -84,6 +103,7 @@
     const out = JSON.parse(JSON.stringify(target || {}));
     for (const [key, value] of Object.entries(fields)) {
       const parts = key.split('.');
+      if (parts.some((p) => ['__proto__', 'constructor', 'prototype'].includes(p))) throw new Error('Campo no permitido');
       let node = out;
       for (let i = 0; i < parts.length - 1; i++) {
         const p = parts[i];
@@ -103,7 +123,10 @@
 
   // path de colección -> Set de callbacks a re-disparar cuando algo cambia ahí
   const listeners = new Map();
-  function notify(collectionPath) {
+  const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('paradas-local-changes') : null;
+  if (channel) channel.onmessage = ({data}) => notify(data, false);
+  function notify(collectionPath, broadcast = true) {
+    if (broadcast && channel) channel.postMessage(collectionPath);
     const set = listeners.get(collectionPath);
     return set ? Promise.all(Array.from(set).map((fn) => fn())) : Promise.resolve();
   }
@@ -167,16 +190,14 @@
       },
       async set(data, opts) {
         if (opts && opts.merge) {
-          const existing = await idbGet(STORE_DOCS, path);
-          await idbPut(STORE_DOCS, path, applyFields(existing || {}, data));
+          await idbMerge(path, data);
         } else {
           await idbPut(STORE_DOCS, path, JSON.parse(JSON.stringify(data)));
         }
         await notify(parentCollectionPath);
       },
       async update(data) {
-        const existing = await idbGet(STORE_DOCS, path);
-        await idbPut(STORE_DOCS, path, applyFields(existing || {}, data));
+        await idbMerge(path, data);
         await notify(parentCollectionPath);
       },
       async delete() {
@@ -255,7 +276,7 @@
 
   const fetchOriginal = window.fetch.bind(window);
   window.fetch = function (input, init) {
-    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const url = typeof input === 'string' || input instanceof URL ? String(input) : (input && input.url) || '';
     const ruta = rutaDeUrlLocal(url);
     if (ruta) {
       return blobDeArchivoLocal(ruta).then((blob) => (blob
@@ -297,6 +318,107 @@
   }
   if (document.documentElement) iniciarObservadorLocal();
   else document.addEventListener('DOMContentLoaded', iniciarObservadorLocal);
+
+  function snapshot() {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE_DOCS, STORE_FILES], 'readonly');
+      const result = { docs: [], files: [] };
+      for (const name of [STORE_DOCS, STORE_FILES]) {
+        const req = tx.objectStore(name).openCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) { result[name].push({ key: cursor.key, value: cursor.value }); cursor.continue(); }
+        };
+      }
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    }));
+  }
+  const MAX_BACKUP = 300 * 1024 * 1024;
+  window.ParadasLocal = {
+    ready: openDb,
+    async listParadas() {
+      // Solo las claves paradas/<id>: no carga las fotos ni el resto de la base en memoria.
+      const rows = await idbGetAllWithPrefix(STORE_DOCS, 'paradas/');
+      return rows.filter(row => /^paradas\/[^/]+$/.test(row.key) && row.value.definition)
+        .map(row => ({ ...row.value, id: row.key.slice('paradas/'.length) }));
+    },
+    async flush() { await new Promise((resolve) => setTimeout(resolve, 450)); const db=await openDb(); return new Promise((resolve,reject)=>{const tx=db.transaction([STORE_DOCS,STORE_FILES],'readonly');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);}); },
+    async stats() {
+      const db = await openDb();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_DOCS, STORE_FILES], 'readonly');
+        const docs = tx.objectStore(STORE_DOCS).count();
+        const files = tx.objectStore(STORE_FILES).count();
+        tx.oncomplete = () => resolve({ docs: docs.result, files: files.result });
+        tx.onerror = () => reject(tx.error);
+      });
+    },
+    async exportBackup() {
+      const data = await snapshot();
+      const zip = new JSZip();
+      const files = [];
+      let bytes = 0;
+      for (let i = 0; i < data.files.length; i++) {
+        const { key, value } = data.files[i];
+        const buf = value.buf || await value.arrayBuffer();
+        bytes += buf.byteLength;
+        if (bytes > MAX_BACKUP) throw new Error('El respaldo supera 300 MB. Exporta desde un equipo con capacidad suficiente.');
+        const entry = 'files/' + i;
+        files.push({ key, entry, type: value.type || '', name: value.name || '' });
+        zip.file(entry, buf);
+      }
+      zip.file('manifest.json', JSON.stringify({ format: 'paradas-bradson-backup', version: 1,
+        createdAt: new Date().toISOString(), paradaId: typeof PARADA_ID === 'undefined' ? '' : PARADA_ID,
+        docs: data.docs, files }));
+      return zip.generateAsync({ type: 'blob', compression: 'STORE', mimeType: 'application/zip' });
+    },
+    async readBackup(file) {
+      if (file.size > MAX_BACKUP) throw new Error('El respaldo supera el límite de 300 MB.');
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      const expanded = Object.values(zip.files).reduce((n, f) => n + ((f._data && f._data.uncompressedSize) || 0), 0);
+      if (expanded > MAX_BACKUP) throw new Error('El contenido del respaldo supera 300 MB.');
+      if (!zip.file('manifest.json')) throw new Error('Este ZIP no es un respaldo de datos de Paradas.');
+      const m = JSON.parse(await zip.file('manifest.json').async('string'));
+      if (m.format !== 'paradas-bradson-backup' || m.version !== 1 || !Array.isArray(m.docs) || !Array.isArray(m.files)) throw new Error('Formato de respaldo no compatible.');
+      const safe = (obj) => {
+        if (!obj || typeof obj !== 'object') return;
+        for (const key of Object.keys(obj)) {
+          if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('El respaldo contiene campos no válidos.');
+          safe(obj[key]);
+        }
+      };
+      safe(m.docs);
+      const docKeys = new Set(), fileKeys = new Set();
+      for (const row of m.docs) {
+        if (typeof row.key !== 'string' || !row.key.startsWith('paradas/') || !row.value || typeof row.value !== 'object' || docKeys.has(row.key)) throw new Error('Registro inválido en el respaldo.');
+        docKeys.add(row.key);
+      }
+      const files = [];
+      for (const row of m.files) {
+        if (typeof row.key !== 'string' || !row.key || fileKeys.has(row.key) || typeof row.entry !== 'string' || !/^files\/\d+$/.test(row.entry) || !zip.file(row.entry)) throw new Error('Archivo inválido o ausente en el respaldo.');
+        fileKeys.add(row.key);
+        files.push({ key: row.key, value: { __localFile: true, type: String(row.type || ''), name: String(row.name || ''), buf: await zip.file(row.entry).async('arraybuffer') } });
+      }
+      return { createdAt: m.createdAt, paradaId: m.paradaId, docs: m.docs, files };
+    },
+    async restoreBackup(data) {
+      await writeTransaction([STORE_DOCS, STORE_FILES], (tx) => {
+        for (const name of [STORE_DOCS, STORE_FILES]) {
+          const store = tx.objectStore(name);
+          store.clear();
+          for (const row of data[name]) store.put(row.value, row.key);
+        }
+      });
+      blobUrls.forEach((url) => URL.revokeObjectURL(url)); blobUrls.clear();
+      if (typeof data.paradaId === 'string' && /^[a-z0-9][a-z0-9_-]{2,55}$/.test(data.paradaId)) {
+        localStorage.setItem('paradas.active', data.paradaId);
+      } else {
+        localStorage.removeItem('paradas.active');
+      }
+      for (const path of listeners.keys()) await notify(path);
+    },
+  };
 
   // ---- window.firebase (reemplaza al SDK real) ----
   window.firebase = {

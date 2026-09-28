@@ -69,6 +69,7 @@ function emergManualCollection() { return state.db.collection('paradas').doc(PAR
 
 function listenLive() {
   subsCollection().onSnapshot((snap) => {
+    state.liveSubs = {};
     snap.forEach((doc) => {
       const d = doc.data() || {};
       // Firestore guarda avance.0, avance.1... como campos planos o como objeto anidado
@@ -88,6 +89,7 @@ function listenLive() {
     setConn(true);
   }, (err) => { console.error('subs error:', err); setConn(false); });
   otsCollection().onSnapshot((snap) => {
+    state.liveOtEstado = {}; state.liveOtMotivo = {}; state.liveOtSupervisor = {}; state.liveOtAvance = {};
     snap.forEach((doc) => {
       const d = doc.data() || {};
       state.liveOtEstado[doc.id] = d.estado || 'Vigente';
@@ -125,12 +127,12 @@ function esLayoutEscritorio() { return window.innerWidth >= 1024; }
 
 async function saveSubAvance(otNum, nombre, turnoIdx, pct) {
   const ref = subsCollection().doc(subKey(otNum, nombre));
-  const valor = pct === 0 ? firebase.firestore.FieldValue.delete() : pct;
+  const valor = Math.max(0, Math.min(1, Number(pct) || 0));
   await ref.set({ [`avance.${turnoIdx}`]: valor, updatedAt: Date.now() }, { merge: true });
 }
 async function saveOtAvance(otNum, turnoIdx, pct) {
   const ref = otsCollection().doc(String(otNum));
-  const valor = pct === 0 ? firebase.firestore.FieldValue.delete() : pct;
+  const valor = Math.max(0, Math.min(1, Number(pct) || 0));
   await ref.set({ [`avance.${turnoIdx}`]: valor, updatedAt: Date.now() }, { merge: true });
 }
 async function saveOtEstado(otNum, estado, motivo) {
@@ -192,11 +194,11 @@ function renderSupervisoresParOt(otNum) {
   // contraste (nunca el color de la persona) para que nombres como el amarillo sigan siendo legibles.
   if (supA) {
     const activo = tActual === 'A';
-    partes.push(`<span class="gantt-sup-tag${activo ? ' gantt-sup-activo' : ''}"><i class="gantt-sup-dot" style="background:${colorForSupervisor(supA)}"></i>${supA}${activo ? ' (turno actual)' : ''}</span>`);
+    partes.push(`<span class="gantt-sup-tag${activo ? ' gantt-sup-activo' : ''}"><i class="gantt-sup-dot" style="background:${colorForSupervisor(supA)}"></i>${escBit(supA)}${activo ? ' (turno actual)' : ''}</span>`);
   }
   if (supB) {
     const activo = tActual === 'B';
-    partes.push(`<span class="gantt-sup-tag${activo ? ' gantt-sup-activo' : ''}"><i class="gantt-sup-dot" style="background:${colorForSupervisor(supB)}"></i>${supB}${activo ? ' (turno actual)' : ''}</span>`);
+    partes.push(`<span class="gantt-sup-tag${activo ? ' gantt-sup-activo' : ''}"><i class="gantt-sup-dot" style="background:${colorForSupervisor(supB)}"></i>${escBit(supB)}${activo ? ' (turno actual)' : ''}</span>`);
   }
   return partes.length ? ` · ${partes.join(' ')}` : '';
 }
@@ -242,9 +244,8 @@ async function deleteManualEmergente(otNum) {
 function setConn(online, noConfig) {
   const dot = document.getElementById('connDot');
   const txt = document.getElementById('connTxt');
-  if (noConfig) { dot.className = 'conn-dot offline'; txt.textContent = 'Falta configurar Firebase'; return; }
-  dot.className = 'conn-dot ' + (online ? 'online' : 'offline');
-  txt.textContent = online ? 'Sincronizado' : 'Sin conexión — se guarda al reconectar';
+  dot.className = 'conn-dot ' + (noConfig ? 'offline' : 'online');
+  txt.textContent = noConfig ? 'No se pudo abrir el almacenamiento' : 'Datos en este dispositivo';
 }
 
 function carryForward(avanceMap, uptoIdx) {
@@ -412,7 +413,7 @@ function renderList() {
     return;
   }
   areas.forEach((area) => {
-    html += `<div class="area-header">${area}</div>`;
+    html += `<div class="area-header">${escBit(area)}</div>`;
     otsFiltradas.filter((o) => o.area === area).forEach((ot) => {
       const estado = getOtEstado(ot.otNum);
       const isEmerg = ot.tipo === 'Emergente';
@@ -428,7 +429,7 @@ function renderList() {
       const supB = getOtSupervisor(ot.otNum, 'B');
       const supColorA = colorForSupervisor(supA);
       const supColorB = colorForSupervisor(supB);
-      const supTag = (supA || supB) ? `<div class="supervisor-tags">${supA ? `<span class="supervisor-tag" style="color:${supColorA}"><i style="background:${supColorA}"></i>A: ${supA}</span>` : ''}${supB ? `<span class="supervisor-tag" style="color:${supColorB}"><i style="background:${supColorB}"></i>B: ${supB}</span>` : ''}</div>` : '';
+      const supTag = (supA || supB) ? `<div class="supervisor-tags">${supA ? `<span class="supervisor-tag" style="color:${supColorA}"><i style="background:${supColorA}"></i>A: ${escBit(supA)}</span>` : ''}${supB ? `<span class="supervisor-tag" style="color:${supColorB}"><i style="background:${supColorB}"></i>B: ${escBit(supB)}</span>` : ''}</div>` : '';
       const cardStyle = (() => {
         if (isCancel) return `style="border-left:3px solid var(--cancelada);"`;
         if (isEmerg) return `style="border-left:3px solid var(--emergente);"`;
@@ -449,7 +450,7 @@ function renderList() {
           <div class="${cardClass} polines-card" ${cardStyle} data-otcard="${ot.otNum}" data-polines="${ot.otNum}">
             <div class="ot-row1">
               <div>
-                <div class="ot-desc">🔧 OT ${ot.otNum} — ${ot.descripcion}</div>
+                <div class="ot-desc">🔧 OT ${ot.otNum} — ${escBit(ot.descripcion)}</div>
                 <div class="ot-num">Cambio de polines · ${cambiados}/${items.length} cambiados${ot.cuadrilla ? ' · Cuadrilla ' + cuadrillaLabel(ot.cuadrilla) : ''}</div>
                 ${supTag}
               </div>
@@ -470,7 +471,7 @@ function renderList() {
           <div class="${cardClass}" ${cardStyle} data-otcard="${ot.otNum}" data-direct="${ot.otNum}">
             <div class="ot-row1">
               <div>
-                <div class="ot-desc">OT ${ot.otNum} — ${ot.descripcion}</div>
+                <div class="ot-desc">OT ${ot.otNum} — ${escBit(ot.descripcion)}</div>
                 <div class="ot-num">${ot.pesoPlanHH ? ot.pesoPlanHH.toFixed(1) + ' HH · ' : ''}avance directo</div>
                 ${supTag}
               </div>
@@ -498,7 +499,7 @@ function renderList() {
         <div class="${cardClass}" ${cardStyle} data-otcard="${ot.otNum}">
           <div class="ot-row1" data-toggle="${ot.otNum}">
             <div>
-              <div class="ot-desc">OT ${ot.otNum} — ${ot.descripcion}</div>
+              <div class="ot-desc">OT ${ot.otNum} — ${escBit(ot.descripcion)}</div>
               <div class="ot-num">${ot.pesoPlanHH.toFixed(1)} HH · ${subsOrdenadas.length} subactividades${comps.length ? ' · ' + comps.length + ' de terceros' : ''}${ot.cuadrilla ? ' · Cuadrilla ' + cuadrillaLabel(ot.cuadrilla) : ''}</div>
               ${supTag}
             </div>
@@ -574,7 +575,7 @@ function renderList() {
         showToast('Emergente eliminada');
       } catch (err) {
         console.error(err);
-        showToast('No se pudo eliminar — revisa tu conexión');
+        showToast('No se pudo eliminar — revisa el almacenamiento del dispositivo');
       }
     });
   });
@@ -634,7 +635,7 @@ function renderCompRow(c) {
     <div class="sub-row comp-row" style="cursor:default;">
       <div class="comp-tag" style="background:${tagColor}22; color:${tagColor}; border:1px solid ${tagColor}55;">${tagLabel}</div>
       <div class="sub-info">
-        <div class="sub-name">${c.nombre}</div>
+        <div class="sub-name">${escBit(c.nombre)}</div>
         <div class="sub-meta">${c.pesoHH.toFixed(1)} HH · no cuenta en tu avance</div>
       </div>
     </div>`;
@@ -649,7 +650,7 @@ function renderSubRow(ot, s) {
     <div class="sub-row" data-ot="${ot.otNum}" data-nombre="${encodeURIComponent(s.nombre)}">
       <div class="sub-check ${done ? 'done' : ''}">${done ? '✓' : ''}</div>
       <div class="sub-info">
-        <div class="sub-name">${s.nombre}</div>
+        <div class="sub-name">${escBit(s.nombre)}</div>
         <div class="sub-meta">${s.pesoHH.toFixed(1)} HH</div>
       </div>
       <div class="sub-pct">${Math.round(cf*100)}%</div>
@@ -734,6 +735,7 @@ function listenPetsDinamicos() {
     state.petsDinamicos = [];
     snap.forEach((doc) => state.petsDinamicos.push({ id: doc.id, ...doc.data() }));
     if (sheetCtx) renderPetsBlock(sheetCtx.otNum);
+    window.dispatchEvent(new Event('paradas:resources'));
   }, (err) => console.error('pets error:', err));
 }
 
@@ -800,11 +802,10 @@ function renderVistaInformes() {
     <div class="informe-card-grande" data-abririnforme="${inf.id}">
       <div class="informe-card-nombre">📝 ${escBit(inf.nombre || '(sin nombre)')}</div>
       <div class="informe-card-meta">
-        ${inf._pendiente ? '<span class="informe-card-pendiente" title="Todavía no se confirma que se guardó en el servidor — puede que no se vea en otros dispositivos hasta que termine">⏳ Guardando en el servidor…</span>' : `${(inf.otNums || []).length} actividad(es)`}
+        ${inf._pendiente ? '<span class="informe-card-pendiente" title="Esperando confirmación del guardado local">⏳ Guardando en el dispositivo…</span>' : `${(inf.otNums || []).length} actividad(es)`}
       </div>
       <button type="button" class="btn-accion-informe" data-previewinforme="${inf.id}" title="Vista previa del Word">👁</button>
       <button type="button" class="btn-accion-informe" data-wordinforme="${inf.id}" title="Descargar Word">⬇</button>
-      <button type="button" class="btn-accion-informe" data-pdfinforme="${inf.id}" title="PDF (borrador)">📄</button>
       <button type="button" class="btn-borrar-informe" data-borrarinforme="${inf.id}" title="Eliminar informe">🗑</button>
       <span class="informe-card-flecha">›</span>
     </div>`).join('');
@@ -824,7 +825,6 @@ function renderVistaInformes() {
   const accionesInforme = {
     previewinforme: { fn: abrirVistaPreviaWord, iconoOcupado: '⏳', errorTxt: 'No se pudo generar la vista previa' },
     wordinforme: { fn: generateInformeWordReal, iconoOcupado: '⏳', errorTxt: 'No se pudo generar el Word' },
-    pdfinforme: { fn: generateInformePdf, iconoOcupado: '⏳', errorTxt: 'No se pudo generar el PDF' },
   };
   Object.entries(accionesInforme).forEach(([dataAttr, { fn, iconoOcupado, errorTxt }]) => {
     wrap.querySelectorAll(`[data-${dataAttr}]`).forEach((btn) => {
@@ -853,7 +853,7 @@ function borrarInforme(id, alBorrar) {
   // si el borrado falla de verdad, el informe simplemente reaparece en la lista.
   informesCollection().doc(id).delete().catch((e) => {
     console.error(e);
-    showToast('No se pudo eliminar — revisa tu conexión');
+    showToast('No se pudo eliminar — revisa el almacenamiento del dispositivo');
   });
   showToast('Informe eliminado ✓');
   if (alBorrar) alBorrar();
@@ -875,14 +875,13 @@ function ensureVistaInformeDetalle() {
     <div class="informes-header">
       <button type="button" class="btn-back" id="btnVolverDeDetalleInforme" title="Volver a Informes">${ICON_BACK}</button>
       <h2 id="detalleInformeNombre">—</h2>
-      <span id="detalleInformePendiente" class="informe-card-pendiente" style="display:none; font-size:11px;" title="Todavía no se confirma que este informe se guardó en el servidor — puede que no se vea en otros dispositivos hasta que termine">⏳ Guardando en el servidor…</span>
+      <span id="detalleInformePendiente" class="informe-card-pendiente" style="display:none; font-size:11px;" title="Todavía no se confirma que este informe se guardó en el servidor — puede que no se vea en otros dispositivos hasta que termine">⏳ Guardando en el dispositivo…</span>
       <button type="button" class="btn-borrar-informe" id="btnBorrarInformeDetalle" title="Eliminar informe" style="font-size:18px;">🗑</button>
     </div>
 
     <button type="button" class="btn-entrar" id="btnEditarComoDocumento" style="width:100%; margin-bottom:10px;">✏️ Editar como documento</button>
     <div style="display:flex; gap:8px; margin-bottom:10px;">
       <button type="button" class="btn-mini btn-mini-primary" id="btnRellenarWordInforme" style="flex:1; padding:12px 8px; font-size:14px;">⬇ Descargar Word</button>
-      <button type="button" class="btn-mini btn-mini-primary" id="btnGenerarPdfInforme" style="flex:1; padding:12px 8px; font-size:14px;">⬇ Descargar PDF</button>
     </div>
 
     <button type="button" class="btn-entrar" id="btnVerActividadesInforme" style="width:100%; margin-bottom:16px;">📋 Ver actividades de este informe</button>
@@ -1038,13 +1037,6 @@ function ensureVistaInformeDetalle() {
     const txt = btn.textContent; btn.disabled = true; btn.textContent = 'Generando…';
     try { await abrirVistaPreviaWord(state.informeActivo); }
     catch (e) { console.error(e); showToast(e.message || 'No se pudo generar la vista previa'); }
-    btn.disabled = false; btn.textContent = txt;
-  });
-  document.getElementById('btnGenerarPdfInforme').addEventListener('click', async () => {
-    const btn = document.getElementById('btnGenerarPdfInforme');
-    const txt = btn.textContent; btn.disabled = true; btn.textContent = 'Generando…';
-    try { await generateInformePdf(state.informeActivo); }
-    catch (e) { console.error(e); showToast('No se pudo generar el PDF'); }
     btn.disabled = false; btn.textContent = txt;
   });
 }
@@ -1254,6 +1246,7 @@ async function comprimirImagenParaSubir(file) {
 // totalBytes), para poder mostrar una barra en vez de un ícono fijo.
 async function subirArchivoAStorage(file, pathSufijo, onProgreso) {
   subidasInformeEnCurso++;
+  window.subidasInformeEnCurso = subidasInformeEnCurso;
   try {
     const archivo = await comprimirImagenParaSubir(file);
     const path = `paradas/${PARADA_ID}/informes/${state.informeActivo.id}/${pathSufijo}`;
@@ -1268,7 +1261,15 @@ async function subirArchivoAStorage(file, pathSufijo, onProgreso) {
     return await ref.getDownloadURL();
   } finally {
     subidasInformeEnCurso--;
+    window.subidasInformeEnCurso = subidasInformeEnCurso;
   }
+}
+
+async function guardarFirmaLocal(file) {
+  const path = `paradas/${PARADA_ID}/informes/${state.informeActivo.id}/encargadoFirma`;
+  const ref = firebase.storage().ref(path);
+  await ref.put(file);
+  return await ref.getDownloadURL();
 }
 
 async function subirArchivoInforme(file, campo, callbackRender, wrapId) {
@@ -1281,7 +1282,7 @@ async function subirArchivoInforme(file, campo, callbackRender, wrapId) {
     showToast('Archivo guardado ✓');
   } catch (e) {
     console.error(e);
-    showToast('No se pudo subir el archivo — revisa tu conexión, e inténtalo de nuevo');
+    showToast('No se pudo subir el archivo — revisa el almacenamiento del dispositivo, e inténtalo de nuevo');
   }
   // Se vuelve a mostrar lo que de verdad quedó guardado, haya funcionado o
   // no — así nunca queda en pantalla la vista previa "Subiendo…" colgada.
@@ -1311,7 +1312,7 @@ async function subirAnexoInforme(file) {
     showToast('Anexo agregado ✓');
   } catch (e) {
     console.error(e);
-    showToast('No se pudo subir el anexo — revisa tu conexión, e inténtalo de nuevo');
+    showToast('No se pudo subir el anexo — revisa el almacenamiento del dispositivo, e inténtalo de nuevo');
   }
   anexosPendientes = anexosPendientes.filter((p) => p.tempId !== pendiente.tempId);
   renderAnexosLista();
@@ -1435,11 +1436,11 @@ function abrirModalInforme() {
   const wrap = document.getElementById('informeOtsList');
   const areas = [...new Set(allOts().map((o) => o.area))];
   wrap.innerHTML = areas.map((area) => `
-    <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--brand); margin:8px 0 4px;">${area}</div>
+    <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--brand); margin:8px 0 4px;">${escBit(area)}</div>
     ${allOts().filter((o) => o.area === area).map((ot) => `
       <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 2px; border-bottom:1px solid var(--line); cursor:pointer;">
         <input type="checkbox" class="informe-ot-check" data-ot="${ot.otNum}" style="width:18px; height:18px; margin-top:1px; flex:none; accent-color:var(--brand);">
-        <span style="font-size:12.5px; color:var(--ink); line-height:1.4;">${ot.manual ? ot.descripcion : `OT ${ot.otNum} — ${ot.descripcion}`}</span>
+        <span style="font-size:12.5px; color:var(--ink); line-height:1.4;">${ot.manual ? ot.descripcion : `OT ${ot.otNum} — ${escBit(ot.descripcion)}`}</span>
       </label>`).join('')}
   `).join('');
   wrap.querySelectorAll('.informe-ot-check').forEach((chk) => {
@@ -1452,7 +1453,7 @@ function abrirModalInforme() {
   document.getElementById('informeBackdrop').classList.add('open');
 }
 
-function guardarInformeAdmin() {
+async function guardarInformeAdmin() {
   const numero = document.getElementById('informeNumero').value.trim();
   const tituloGeneral = document.getElementById('informeTituloGeneral').value.trim();
   if (!numero) { showToast('Escribe el N° de informe'); return; }
@@ -1464,18 +1465,18 @@ function guardarInformeAdmin() {
   }
   const codigo = `IT-MCEN-${numero}-SUL`;
   const nombre = `${codigo} — ${tituloGeneral}`;
-  // No se espera la confirmación del servidor antes de cerrar la ventana:
-  // con mala señal esa confirmación puede tardar mucho, y el botón se sentía
-  // pegado para siempre sin ninguna señal de que sí funcionó. El informe
-  // aparece de una en la lista (con el aviso "Guardando en el servidor..."
-  // si todavía no se confirma) gracias a que state.informes ya se actualiza
-  // al instante con la escritura optimista local de Firestore.
-  informesCollection().add({ nombre, numero, tituloGeneral, otNums: informePendingOts, createdAt: Date.now() }).catch((e) => {
+  const btn = document.getElementById('informeSave');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    await informesCollection().add({ nombre, numero, tituloGeneral, otNums: [...informePendingOts], createdAt: Date.now() });
+    showToast('Informe creado ✓');
+    document.getElementById('informeBackdrop').classList.remove('open');
+  } catch (e) {
     console.error(e);
-    showToast('No se pudo guardar el informe — revisa tu conexión');
-  });
-  showToast('Informe creado ✓');
-  document.getElementById('informeBackdrop').classList.remove('open');
+    showToast('No se pudo guardar el informe — revisa el almacenamiento del dispositivo');
+  } finally { btn.disabled = false; btn.textContent = 'Crear informe'; }
+
 }
 
 // Arma el informe completo en PDF a partir de lo que ya se cargó en la app (bitácora
@@ -1534,7 +1535,9 @@ function ultimoIndiceEnRango(xml, texto, desde, hasta) {
 const INFORME_TC_BORDERS = '<w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders>';
 
 function escXmlWord(str) {
-  return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Se quitan los caracteres de control (invalidan el XML de Word) y se escapan también las comillas.
+  return String(str == null ? '' : str).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function randParaIdWord() {
@@ -1682,8 +1685,10 @@ async function prepararFirmaParaWord(url, cyDestino) {
     const r = await fetch(url);
     const blob = await r.blob();
     const bitmap = await createImageBitmap(blob);
-    const cy = cyDestino || Math.round(2 * INFORME_EMU_POR_CM);
-    const cx = Math.round(cy * (bitmap.width / bitmap.height));
+    const maxCy = cyDestino || Math.round(2 * INFORME_EMU_POR_CM);
+    const maxCx = Math.round(3.1 * INFORME_EMU_POR_CM);
+    const escala = Math.min(maxCy / bitmap.height, maxCx / bitmap.width);
+    const cx = Math.round(bitmap.width * escala), cy = Math.round(bitmap.height * escala);
 
     const maxDim = 800;
     let outW = bitmap.width, outH = bitmap.height;
@@ -2396,8 +2401,8 @@ async function generateInformeWordBlob(informe, opciones = {}) {
   // marcas (⟦...⟧) que la pantalla convierte en botones de añadir/quitar. El
   // Word que se descarga se genera SIN eso.
   if (opciones.modoEditor) opciones = { ...opciones, permitirSinComentarios: true };
-  if (typeof PizZip === 'undefined') throw new Error('PizZip no cargó — revisa tu conexión.');
-  const resp = await fetch('./assets/plantilla-informe.docx');
+  if (typeof PizZip === 'undefined') throw new Error('PizZip no cargó — revisa el almacenamiento del dispositivo.');
+  const resp = await fetch((window.ParadasCatalog && window.ParadasCatalog.current && window.ParadasCatalog.current.templateUrl) || './assets/plantilla-informe.docx');
   if (!resp.ok) throw new Error('No se pudo descargar la plantilla Word.');
   const buf = await resp.arrayBuffer();
   const zip = new PizZip(buf);
@@ -3377,7 +3382,7 @@ async function generateInformeWordBlob(informe, opciones = {}) {
 // eso no hace nada, porque el WebView de Android no tiene un gestor de
 // descargas para eso — ahí se guarda el archivo de verdad en el dispositivo
 // con el plugin Filesystem y se ofrece compartirlo/abrirlo de una vez.
-async function descargarBlob(blob, nombreArchivo) {
+async function descargarBlob(blob, nombreArchivo, opciones = {}) {
   const esApp = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
   if (esApp) {
     try {
@@ -3388,8 +3393,22 @@ async function descargarBlob(blob, nombreArchivo) {
         reader.readAsDataURL(blob);
       });
       const { Filesystem, Share, FileOpener } = window.Capacitor.Plugins;
-      const resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'DOCUMENTS' });
-      showToast(`Guardado en Documentos: ${nombreArchivo}`);
+      // Primero Documentos (queda visible para el usuario); si Android lo rechaza
+      // (almacenamiento con alcance restringido) se usa la caché de la app y se
+      // abre/comparte desde ahí.
+      let resultado, enDocumentos = true;
+      try { resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'DOCUMENTS', recursive: true }); }
+      catch (errDoc) {
+        console.warn('No se pudo escribir en Documentos, se usa la caché de la app', errDoc);
+        enDocumentos = false;
+        resultado = await Filesystem.writeFile({ path: nombreArchivo, data: base64, directory: 'CACHE', recursive: true });
+      }
+      if (opciones.compartir && Share) {
+        // Respaldos: abre el menú de compartir de Android (ahí se elige Drive, WhatsApp, correo…).
+        await Share.share({ title: nombreArchivo, url: resultado.uri, dialogTitle: 'Guardar respaldo en…' });
+        return;
+      }
+      showToast(enDocumentos ? `Guardado en Documentos: ${nombreArchivo}` : `Archivo listo: ${nombreArchivo}`);
       // Se abre con "Abrir con…" (Word, WPS, visor de PDF…), no con el menú de
       // compartir. Solo si el teléfono no tiene ninguna app para ese archivo
       // se ofrece compartirlo.
@@ -3403,7 +3422,7 @@ async function descargarBlob(blob, nombreArchivo) {
         }
       }
       if (!abierto) {
-        showToast('No encontré una app para abrirlo — queda guardado en Documentos');
+        showToast(enDocumentos ? 'No encontré una app para abrirlo — queda guardado en Documentos' : 'No encontré una app para abrirlo — elige dónde guardarlo');
         if (Share) Share.share({ title: nombreArchivo, url: resultado.uri }).catch(() => {});
       }
     } catch (e) {
@@ -3432,7 +3451,7 @@ async function generateInformeWordReal(informe) {
 // los datos/fotos/tablas están donde corresponde.
 async function abrirVistaPreviaWord(informe) {
   if (typeof window.docx === 'undefined' || !window.docx.renderAsync) {
-    throw new Error('El visor de Word no cargó — revisa tu conexión.');
+    throw new Error('El visor de Word no cargó — revisa el almacenamiento del dispositivo.');
   }
   const backdrop = document.getElementById('previewWordBackdrop');
   const loading = document.getElementById('previewWordLoading');
@@ -3480,7 +3499,7 @@ function hoyISOEditor() { return new Date(Date.now() - new Date().getTimezoneOff
 
 async function abrirVistaInteractiva(informe) {
   if (typeof window.docx === 'undefined' || !window.docx.renderAsync) {
-    throw new Error('El visor de Word no cargó — revisa tu conexión.');
+    throw new Error('El visor de Word no cargó — revisa el almacenamiento del dispositivo.');
   }
   document.getElementById('editorTitulo').textContent = informe.numero ? `Informe ${informe.numero}` : 'Editar informe';
   document.getElementById('vistaInteractivaBackdrop').classList.add('open');
@@ -3528,6 +3547,7 @@ async function renderizarDocumentoEditor(primeraVez) {
     await ajustarMarcaAguaEditor(staging);
     activarPuntosEditablesInforme(informe, staging);
     activarMarcasEditor(informe, staging);
+    window.DocumentEditor?.postprocess(staging, informe);
     cont.replaceChildren(...Array.from(staging.childNodes));
     ajustarZoomEditor(cont);
     cont.scrollTop = scroll;
@@ -3899,7 +3919,9 @@ function abrirEdicionTextoInforme(informe, campo, etiqueta, valorActual) {
 async function abrirSelectorFotoInforme(informe, campo) {
   const file = await elegirArchivoEditor('image/*');
   if (!file) return;
+  state.informeActivo = informe;
   showToast('Subiendo foto…');
+  if (campo === 'encargadoFirmaUrl') { await guardarCampoInformeActivo(campo, await guardarFirmaLocal(file)); await refrescarVistaInteractiva(); return; }
   await subirArchivoInforme(file, campo, null);
   await refrescarVistaInteractiva();
 }
@@ -4546,7 +4568,6 @@ document.addEventListener('DOMContentLoaded', () => {
       // que muestre lo nuevo (pasos, fotos, preparativos, conclusiones…).
       if (state.informeActivo && state.informeActivo.id) abrirInformeDetalle(state.informeActivo.id);
     });
-    document.getElementById('editorBtnActividades').addEventListener('click', dialogoActividadesInforme);
     const conEstado = (idBtn, fn) => document.getElementById(idBtn).addEventListener('click', async () => {
       const btn = document.getElementById(idBtn);
       const txt = btn.textContent; btn.disabled = true; btn.textContent = 'Generando…';
@@ -4557,129 +4578,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const { blob, nombreArchivo } = await generateInformeWordBlob(state.informeActivo, { permitirSinComentarios: true });
       await descargarBlob(blob, nombreArchivo);
     });
-    conEstado('editorBtnPdf', () => generateInformePdf(state.informeActivo));
   }, 'editor-pantalla');
 });
-
-async function generateInformePdf(informe) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const pageW = 210, pageH = 297, marginX = 16;
-  const C_DARK = [26, 26, 46], C_MUTED = [107, 107, 117], C_LINE = [220, 220, 216];
-  const C_BRAND = (window.BRANDING && window.BRANDING.colorRGB) || [31, 160, 165];
-  let cy = 20, pageNum = 1;
-
-  function drawFooter() {
-    doc.setFontSize(7.5); doc.setTextColor(150, 150, 150);
-    doc.text('Generado automáticamente — ' + ((window.BRANDING && window.BRANDING.empresa) || 'DIMARZA'), marginX, pageH - 8);
-    doc.text('Página ' + pageNum, pageW - marginX, pageH - 8, { align: 'right' });
-    doc.setTextColor(0, 0, 0);
-  }
-  function newPage() { doc.addPage(); pageNum++; drawFooter(); cy = 18; }
-  function ensureSpace(h) { if (cy + h > pageH - 16) newPage(); }
-
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(...C_DARK);
-  doc.text(informe.nombre || 'Informe', marginX, cy);
-  cy += 8;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...C_MUTED);
-  doc.text(`${SEED_DATA.paradaNombre} · Generado: ${new Date().toLocaleString('es-CL')}`, marginX, cy);
-  doc.setTextColor(0, 0, 0);
-  cy += 10;
-
-  const ots = (informe.otNums || [])
-    .map((n) => allOts().find((o) => String(o.otNum) === String(n)))
-    .filter(Boolean);
-
-  for (const ot of ots) {
-    ensureSpace(14);
-    doc.setFillColor(...C_BRAND);
-    doc.rect(marginX, cy, pageW - marginX * 2, 7, 'F');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(255, 255, 255);
-    doc.text(ot.manual ? ot.descripcion : `OT ${ot.otNum} — ${ot.descripcion}`, marginX + 3, cy + 5);
-    doc.setTextColor(0, 0, 0);
-    cy += 11;
-
-    const entries = state.bitacora
-      .filter((b) => String(b.otNum) === String(ot.otNum))
-      .sort((a, b) => (a.turnoIdx ?? 0) - (b.turnoIdx ?? 0) || (a.createdAt || 0) - (b.createdAt || 0));
-
-    if (!entries.length) {
-      doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...C_MUTED);
-      doc.text('Sin comentarios registrados para esta actividad.', marginX + 2, cy + 4);
-      doc.setTextColor(0, 0, 0);
-      cy += 10;
-      continue;
-    }
-
-    for (const entry of entries) {
-      ensureSpace(12);
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...C_BRAND);
-      doc.text(`${entry.fecha ? fmtFechaCorta(entry.fecha) : ''} · Turno ${entry.turnoTipo || ''}`, marginX + 2, cy + 4);
-      doc.setTextColor(0, 0, 0);
-      cy += 6;
-
-      if (entry.bullets && entry.bullets.length) {
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-        entry.bullets.filter((b) => b && b.trim()).forEach((b) => {
-          const lines = doc.splitTextToSize('• ' + b, pageW - marginX * 2 - 4);
-          ensureSpace(lines.length * 4.2 + 2);
-          doc.text(lines, marginX + 4, cy + 3.5);
-          cy += lines.length * 4.2 + 1;
-        });
-        cy += 2;
-      }
-
-      if (entry.fotos && entry.fotos.length) {
-        const maxWmm = 90, maxHmm = 70, gap = 6;
-        const colW = (pageW - marginX * 2 - gap) / 2;
-        let colX = marginX, rowMaxH = 0, colIdx = 0;
-        for (const foto of entry.fotos) {
-          let dataUrl, props;
-          try {
-            dataUrl = await urlToDataURL(foto.url);
-            props = doc.getImageProperties(dataUrl);
-          } catch (e) { continue; } // si una foto no carga, se sigue con el resto sin romper el informe
-
-          let w = Math.min(colW, maxWmm), h = w * (props.height / props.width);
-          if (h > maxHmm) { h = maxHmm; w = h * (props.width / props.height); }
-
-          if (colIdx === 2) { colIdx = 0; colX = marginX; cy += rowMaxH + 5; rowMaxH = 0; }
-          ensureSpace(h + 10);
-
-          doc.addImage(dataUrl, props.fileType || 'JPEG', colX, cy, w, h);
-          if (foto.descripcion) {
-            doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...C_MUTED);
-            doc.text(doc.splitTextToSize(foto.descripcion, w), colX, cy + h + 3.5);
-            doc.setTextColor(0, 0, 0);
-          }
-          rowMaxH = Math.max(rowMaxH, h + 8);
-          colX += colW + gap;
-          colIdx++;
-        }
-        cy += rowMaxH + 4;
-      }
-      cy += 3;
-    }
-    cy += 4;
-  }
-
-  // Firmas — en blanco: se firman a mano o digital una vez revisado el informe.
-  ensureSpace(30);
-  cy += 8;
-  doc.setDrawColor(...C_LINE);
-  const firmas = ['ELABORADO', 'REVISADO', 'VALIDADO', 'ENCARGADO'];
-  const gapFirma = 6, colWFirma = (pageW - marginX * 2 - gapFirma * (firmas.length - 1)) / firmas.length;
-  firmas.forEach((f, i) => {
-    const x = marginX + i * (colWFirma + gapFirma);
-    doc.line(x, cy + 14, x + colWFirma, cy + 14);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...C_MUTED);
-    doc.text(f, x, cy + 18);
-    doc.setTextColor(0, 0, 0);
-  });
-
-  drawFooter();
-  descargarBlob(doc.output('blob'), `${(informe.nombre || 'informe').replace(/[/\\?%*:|"<>]/g, '-')}.pdf`);
-}
 
 function renderPetsBlock(otNum) {
   const block = document.getElementById('petsBlock');
@@ -4713,11 +4613,11 @@ function abrirModalPets() {
   const wrap = document.getElementById('petsOtsList');
   const areas = [...new Set(allOts().map((o) => o.area))];
   wrap.innerHTML = areas.map((area) => `
-    <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--brand); margin:8px 0 4px;">${area}</div>
+    <div style="font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--brand); margin:8px 0 4px;">${escBit(area)}</div>
     ${allOts().filter((o) => o.area === area).map((ot) => `
       <label style="display:flex; align-items:flex-start; gap:8px; padding:6px 2px; border-bottom:1px solid var(--line); cursor:pointer;">
         <input type="checkbox" class="pets-ot-check" data-ot="${ot.otNum}" style="width:18px; height:18px; margin-top:1px; flex:none; accent-color:var(--brand);">
-        <span style="font-size:12.5px; color:var(--ink); line-height:1.4;">${ot.manual ? ot.descripcion : `OT ${ot.otNum} — ${ot.descripcion}`}</span>
+        <span style="font-size:12.5px; color:var(--ink); line-height:1.4;">${escBit(ot.manual ? ot.descripcion : `OT ${ot.otNum} — ${ot.descripcion}`)}</span>
       </label>`).join('')}
   `).join('');
   wrap.querySelectorAll('.pets-ot-check').forEach((chk) => {
@@ -4749,7 +4649,7 @@ async function guardarPetsAdmin() {
     document.getElementById('petsBackdrop').classList.remove('open');
   } catch (e) {
     console.error(e);
-    showToast('No se pudo guardar el PETS — revisa tu conexión');
+    showToast('No se pudo guardar el PETS — revisa el almacenamiento del dispositivo');
   }
   btn.disabled = false; btn.textContent = 'Guardar PETS';
 }
@@ -4813,7 +4713,7 @@ function populateTurnoOverride(selectedIdx, avanceMap) {
   sel.innerHTML = SEED_DATA.turnoLabels.map((lbl, i) => {
     const raw = avanceMap ? (avanceMap[i] !== undefined ? avanceMap[i] : avanceMap[String(i)]) : undefined;
     const tag = raw !== undefined ? ` — ${Math.round(raw * 100)}% cargado` : '';
-    const now = i === turnoActualIdx() ? ' (ahora)' : '';
+    const now = i === turnoActualIdx() && Date.now() >= new Date(SEED_DATA.turnos[0]).getTime() && Date.now() < new Date(SEED_DATA.turnos.at(-1)).getTime() + 43200000 ? ' (ahora)' : '';
     return `<option value="${i}" ${i === selectedIdx ? 'selected' : ''}>${lbl}${now}${tag}</option>`;
   }).join('');
 }
@@ -5072,7 +4972,15 @@ async function generateCurvaSImagen() {
   }
 }
 
-function renderAll() { renderList(); renderChart(); renderGanttChart(); }
+let renderFrame = null;
+function renderAll() {
+  if (renderFrame !== null) return;
+  renderFrame = requestAnimationFrame(() => {
+    renderFrame = null;
+    renderList(); renderChart(); renderGanttChart();
+    window.dispatchEvent(new Event('paradas:render'));
+  });
+}
 
 function initTabs() {
   document.querySelectorAll('nav.tabs button').forEach((btn) => {
@@ -5212,7 +5120,7 @@ function renderGanttOverview() {
 
       return `
         <div class="${rowClasses.join(' ')}" data-ot="${ot.otNum}">
-          <div class="gantt-row-name">OT ${ot.otNum} — ${ot.descripcion}</div>
+          <div class="gantt-row-name">OT ${ot.otNum} — ${escBit(ot.descripcion)}</div>
           <div class="gantt-row-dates">${fmtDateHour(ot.inicio)} → ${fmtDateHour(ot.fin)}${renderSupervisoresParOt(ot.otNum)}</div>
           ${badges ? `<div class="gantt-badges">${badges}</div>` : ''}
           <div class="gantt-track">
@@ -5223,7 +5131,7 @@ function renderGanttOverview() {
         </div>`;
     }).join('');
     if (!rowsHtml.trim()) return '';
-    return `<div class="gantt-area-header">${area}</div>${rowsHtml}`;
+    return `<div class="gantt-area-header">${escBit(area)}</div>${rowsHtml}`;
   }).join('');
 
   const wrap = document.getElementById('ganttWrap');
@@ -5649,8 +5557,8 @@ function renderComponentesSection() {
       ${c.fotoURL ? `<img src="${c.fotoURL}" alt="foto">` : ''}
       <div class="c-info">
         <div class="c-sap">${c.codigoSAP || 'S/COD'}</div>
-        <div class="c-desc">${c.descripcion}</div>
-        <div class="c-cant">Cantidad: ${c.cantidad}</div>
+        <div class="c-desc">${escBit(c.descripcion)}</div>
+        <div class="c-cant">Cantidad: ${escBit(c.cantidad)}</div>
       </div>
       <button class="c-del" data-delcomp="${c.id}" title="Eliminar">✕</button>
     </div>
@@ -5663,7 +5571,7 @@ function renderComponentesSection() {
         showToast('Componente eliminado');
       } catch (e) {
         console.error(e);
-        showToast('No se pudo eliminar — revisa tu conexión');
+        showToast('No se pudo eliminar — revisa el almacenamiento del dispositivo');
       }
     });
   });
@@ -5876,7 +5784,7 @@ async function savePolinPosicion(otNum, polin, posicion) {
     }, { merge: true });
   } catch (e) {
     console.error(e);
-    showToast('No se pudo guardar la posición — revisa tu conexión');
+    showToast('No se pudo guardar la posición — revisa el almacenamiento del dispositivo');
   }
 }
 
@@ -5895,7 +5803,7 @@ async function savePolinFoto(otNum, polin, tipo, file) {
     showToast('Foto guardada ✓');
   } catch (e) {
     console.error(e);
-    showToast('No se pudo subir la foto — revisa tu conexión');
+    showToast('No se pudo subir la foto — revisa el almacenamiento del dispositivo');
   }
 }
 
@@ -6032,7 +5940,7 @@ function ensurePolinesModal() {
     const opciones = opcionesPosicionActuales();
     document.querySelectorAll('.polin-emerg-posicion-select').forEach((sel) => {
       const valorPrevio = sel.value;
-      sel.innerHTML = opciones.map((o) => `<option value="${o}">${o || '— Sin especificar —'}</option>`).join('');
+      sel.innerHTML = opciones.map((o) => `<option value="${escBit(o)}">${escBit(o) || '— Sin especificar —'}</option>`).join('');
       if (opciones.includes(valorPrevio)) sel.value = valorPrevio;
     });
   }
@@ -6196,7 +6104,7 @@ function polinRowHtml(p, otNum, mostrarEstacion) {
   const posicionActual = (e && e.posicionManual) || p.posicion || '';
   const opcionesPos = opcionesPosicionPolin(p.ubicacion, p.correa, p.tipoEstacion);
   const selectorPosicion = `<select class="polin-posicion-select" data-possel="${p.id}">${opcionesPos.map((o) =>
-    `<option value="${o}" ${o === posicionActual ? 'selected' : ''}>${o || '— Posición —'}</option>`).join('')}</select>`;
+    `<option value="${escBit(o)}" ${o === posicionActual ? 'selected' : ''}>${escBit(o) || '— Posición —'}</option>`).join('')}</select>`;
   const posTag = posicionActual ? `<span class="polin-posicion-tag">${posicionActual}</span> ` : '';
   // El N° de estacion ya se muestra siempre en el mini-encabezado de arriba (sea uno solo o
   // varios agrupados) — aqui adentro de la tarjeta no se repite, solo el tipo/posicion.
@@ -6259,7 +6167,7 @@ function polinGrupoHtml(sub, otNum) {
     const cambiado = e && e.estado === 'Cambiado';
     const posicionActual = (e && e.posicionManual) || p.posicion || '';
     const selector = `<select class="polin-posicion-select" data-possel="${p.id}">${opcionesPos.map((o) =>
-      `<option value="${o}" ${o === posicionActual ? 'selected' : ''}>${o || '— Posición —'}</option>`).join('')}</select>`;
+      `<option value="${escBit(o)}" ${o === posicionActual ? 'selected' : ''}>${escBit(o) || '— Posición —'}</option>`).join('')}</select>`;
     const btnX = p.emergente
       ? `<button type="button" class="btn-x-emergente btn-x-emergente-mini" data-eliminarpolin="${p.idOriginal || p.id}" data-eliminarpolinot="${otNum}" title="Eliminar este polín emergente">✕</button>`
       : '';
@@ -6408,7 +6316,7 @@ function renderPolinesList() {
         showToast('Polín emergente eliminado');
       } catch (err) {
         console.error(err);
-        showToast('No se pudo eliminar — revisa tu conexión');
+        showToast('No se pudo eliminar — revisa el almacenamiento del dispositivo');
         btn.disabled = false;
       }
     });
@@ -6827,7 +6735,7 @@ async function subirFotoActividad(otNum, tipo, file) {
     showToast('Foto guardada ✓');
   } catch (e) {
     console.error(e);
-    showToast('No se pudo subir la foto — revisa tu conexión');
+    showToast('No se pudo subir la foto — revisa el almacenamiento del dispositivo');
   }
   if (btn) { btn.disabled = false; btn.textContent = '📷 Subir foto'; }
 }
@@ -6958,7 +6866,8 @@ function renderComentarioFeed(otNum) {
 
 async function guardarComentarioActividad() {
   if (!sheetCtx) return;
-  const ot = allOts().find((o) => o.otNum === sheetCtx.otNum);
+  const ctx = { ...sheetCtx };
+  const ot = allOts().find((o) => String(o.otNum) === String(ctx.otNum));
   const bullets = (document.getElementById('comentarioTexto').value || '')
     .split('\n').map((s) => s.trim()).filter(Boolean);
   const fotosConFile = comentarioFotoRows.filter((r) => r.file);
@@ -6972,19 +6881,19 @@ async function guardarComentarioActividad() {
     const storage = firebase.storage();
     const fotos = [];
     for (const row of fotosConFile) {
-      const path = `paradas/${PARADA_ID}/bitacora/${sheetCtx.otNum}_${Date.now()}_${row.file.name}`;
+      const path = `paradas/${PARADA_ID}/bitacora/${ctx.otNum}_${Date.now()}_${row.file.name}`;
       const ref = storage.ref(path);
       await ref.put(await comprimirImagenParaSubir(row.file));
       const url = await ref.getDownloadURL();
       fotos.push({ url, descripcion: row.descripcion || '' });
     }
-    const tIdx = turnoActualIdx();
+    const tIdx = ctx.turnoIdx;
     const tISO = SEED_DATA.turnos[tIdx] || new Date().toISOString();
     await bitacoraCollection().add({
-      otNum: sheetCtx.otNum,
+      otNum: ctx.otNum,
       otDescripcion: ot.descripcion,
       area: ot.area,
-      titulo: (typeof sheetCtx.manual !== 'undefined' && sheetCtx.manual) ? ot.descripcion : `OT ${ot.otNum} — ${ot.descripcion}`,
+      titulo: (typeof ctx.manual !== 'undefined' && ctx.manual) ? ot.descripcion : `OT ${ot.otNum} — ${ot.descripcion}`,
       fecha: tISO.slice(0, 10),
       turnoTipo: turnoTipoDe(tIdx) === 'A' ? 'Día' : 'Noche',
       turnoIdx: tIdx,
@@ -6992,7 +6901,7 @@ async function guardarComentarioActividad() {
       fotos,
       createdAt: Date.now(),
     });
-    resetComentarioForm();
+    if (sheetCtx && String(sheetCtx.otNum) === String(ctx.otNum)) resetComentarioForm();
     showToast('Avance guardado ✓');
   } catch (e) {
     console.error(e);
@@ -7077,6 +6986,7 @@ function openInicioView() {
 
 // Cambia de vista y deja la pestaña correcta marcada
 function irAVista(nombre) {
+  document.body.dataset.page = nombre;
   if (nombre === 'inicio') {
     document.querySelectorAll('.sheet-backdrop').forEach((el) => el.classList.remove('open'));
     document.body.classList.remove('polines-abierto');
@@ -7114,6 +7024,7 @@ function irAVista(nombre) {
 
   const mainEl = document.querySelector('main');
   if (mainEl) mainEl.scrollTop = 0;
+  window.dispatchEvent(new CustomEvent('paradas:navigate', { detail: nombre }));
 }
 
 // Aviso fijo de "estás viendo solo las actividades de este informe", con
@@ -7183,20 +7094,22 @@ function safeInit(fn, label) {
 // app hasta que se le ocurriera hacer un refresco forzado a mano — ahora
 // la actualizacion se nota sola, sin pasos manuales.
 function iniciarServiceWorkerAutoActualizable() {
-  if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('./sw.js')
-    .then((reg) => reg.update().catch(() => {}))
-    .catch(console.error);
-  let yaRecargo = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (yaRecargo) return;
-    yaRecargo = true;
-    window.location.reload();
-  });
+  // En el APK los recursos ya van empaquetados y local-db.js sirve los archivos guardados: no se necesita service worker.
+  if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+  if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return;
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    const offer = () => { if (reg.waiting && navigator.serviceWorker.controller) window.dispatchEvent(new CustomEvent('paradas:update', { detail: reg })); };
+    offer();
+    reg.addEventListener('updatefound', () => {
+      const worker = reg.installing;
+      worker.addEventListener('statechange', () => { if (worker.state === 'installed') offer(); });
+    });
+    reg.update().catch(() => {});
+  }).catch((error) => console.warn('Modo sin conexión no disponible', error));
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-
+document.addEventListener('DOMContentLoaded', async () => {
+  await window.ParadasCatalog?.ready;
   safeInit(() => {
     document.getElementById('paradaTitle').textContent = SEED_DATA.paradaNombre.replace(/^SHUTDOWN\s+/i, '');
     const wpIni = SEED_DATA.turnos[0];
@@ -7221,9 +7134,7 @@ document.addEventListener('DOMContentLoaded', () => {
     iniciarServiceWorkerAutoActualizable();
   }, 'principal');
 
-  // Panel "Mantenciones": por ahora esta app solo trabaja con una mantención
-  // (los datos de EMPRESA/CLIENTE/ÁREA vienen de window.BRANDING) — el panel
-  // la muestra como tarjeta activa, y queda listo para cuando haya más de una.
+  // El catálogo propio abre el selector de paradas con un listener en captura.
   safeInit(() => {
     const backdrop = document.getElementById('mantencionesBackdrop');
     const btn = document.getElementById('btnMenuMantenciones');
@@ -7255,14 +7166,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }, 'panel-mantenciones');
 
   safeInit(() => {
-    async function guardarPctActual() {
-      if (!sheetCtx) return;
-      const pct = parseInt(document.getElementById('pctSlider').value, 10) / 100;
+    async function guardarPctActual(ctx, pct) {
+      if (!ctx) return;
       try {
-        if (sheetCtx.direct) {
-          await saveOtAvance(sheetCtx.otNum, sheetCtx.turnoIdx, pct);
+        if (ctx.direct) {
+          await saveOtAvance(ctx.otNum, ctx.turnoIdx, pct);
         } else {
-          await saveSubAvance(sheetCtx.otNum, sheetCtx.nombre, sheetCtx.turnoIdx, pct);
+          await saveSubAvance(ctx.otNum, ctx.nombre, ctx.turnoIdx, pct);
         }
         showToast('Guardado ✓');
       } catch (e) {
@@ -7274,14 +7184,14 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('pctSlider').addEventListener('input', (e) => {
       document.getElementById('pctDisplay').textContent = e.target.value + '%';
       clearTimeout(debouncePct);
-      debouncePct = setTimeout(guardarPctActual, 550);
+      debouncePct = setTimeout(guardarPctActual, 350, sheetCtx ? { ...sheetCtx } : null, Number(e.target.value) / 100);
     });
     document.querySelectorAll('.quick-pcts button').forEach((b) => {
       b.addEventListener('click', () => {
         document.getElementById('pctSlider').value = b.dataset.v;
         document.getElementById('pctDisplay').textContent = b.dataset.v + '%';
         clearTimeout(debouncePct);
-        guardarPctActual();
+        guardarPctActual(sheetCtx ? { ...sheetCtx } : null, Number(b.dataset.v) / 100);
       });
     });
     document.getElementById('turnoOverride').addEventListener('change', (e) => {
@@ -7311,7 +7221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Estado actualizado');
       } catch (err) {
         console.error(err);
-        showToast('No se pudo guardar el estado — revisa tu conexión');
+        showToast('No se pudo guardar el estado — revisa el almacenamiento del dispositivo');
       }
     });
     document.getElementById('motivoOtTextarea').addEventListener('blur', async (e) => {
@@ -7324,7 +7234,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (limpio) showToast('Motivo guardado');
       } catch (err) {
         console.error(err);
-        showToast('No se pudo guardar el motivo — revisa tu conexión');
+        showToast('No se pudo guardar el motivo — revisa el almacenamiento del dispositivo');
       }
     });
     document.getElementById('sheetBackdrop').addEventListener('click', (e) => { if (e.target.id === 'sheetBackdrop') closeSheet(); });
@@ -7337,7 +7247,7 @@ document.addEventListener('DOMContentLoaded', () => {
         closeSheet();
       } catch (e) {
         console.error(e);
-        showToast('No se pudo eliminar — revisa tu conexión');
+        showToast('No se pudo eliminar — revisa el almacenamiento del dispositivo');
       }
     });
   }, 'sheet-avance');
@@ -7375,7 +7285,7 @@ document.addEventListener('DOMContentLoaded', () => {
         backdrop.classList.remove('open');
       } catch (e) {
         console.error(e);
-        showToast('No se pudo crear — revisa tu conexión');
+        showToast('No se pudo crear — revisa el almacenamiento del dispositivo');
       }
     });
   }, 'emergente-simple');
@@ -7666,6 +7576,7 @@ document.addEventListener('DOMContentLoaded', () => {
           renderList();
           renderGanttChart();
           actualizarEtiquetaInformeActividades();
+          window.dispatchEvent(new Event('paradas:render'));
           dropdown.classList.remove('open');
           arrowBtn.setAttribute('aria-expanded', 'false');
           refrescarOpciones();
@@ -7674,7 +7585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     refrescarOpciones();
     actualizarEtiquetaInformeActividades();
-    setInterval(refrescarOpciones, 4000); // se refresca solo cuando cambian los datos de Firebase
+    window.addEventListener('paradas:render', refrescarOpciones);
 
     arrowBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -7761,8 +7672,8 @@ function toggleEditorInlineSub(cont, ot, otNum, nombre, filaEl) {
   cont.querySelectorAll('.sub-row.abierta').forEach((r) => r.classList.remove('abierta'));
   if (yaEraDeEstaFila) {
     // Se cerró la fila: el selector de turno vuelve a reflejar la OT completa.
-    sheetCtx = { otNum, nombre: null, turnoIdx: turnoActualIdx(), direct: true, manual: false, esLista: true };
-    populateTurnoOverride(turnoActualIdx(), state.liveOtAvance[otNum]);
+    sheetCtx = { otNum, nombre: null, turnoIdx: Number(document.getElementById('turnoOverride').value), direct: true, manual: false, esLista: true };
+    populateTurnoOverride(Number(document.getElementById('turnoOverride').value), state.liveOtAvance[otNum]);
     return;
   }
 
@@ -7770,7 +7681,7 @@ function toggleEditorInlineSub(cont, ot, otNum, nombre, filaEl) {
 
   const s = ot.subactividades.find((x) => x.nombre === nombre);
   const live = getSubLive(otNum, nombre);
-  const tIdx = turnoActualIdx();
+  const tIdx = Number(document.getElementById('turnoOverride').value);
   const cf = carryForward(live.avance, tIdx) || 0;
   const raw = (live.avance && live.avance[tIdx] !== undefined) ? live.avance[tIdx] : cf;
   const pctInicial = Math.round(raw * 100);
@@ -7792,10 +7703,9 @@ function toggleEditorInlineSub(cont, ot, otNum, nombre, filaEl) {
     </div>`;
   filaEl.insertAdjacentElement('afterend', div);
 
-  async function guardarInline() {
+  async function guardarInline(turnoSel, pct) {
     try {
-      const turnoSel = parseInt(document.getElementById('turnoOverride').value, 10);
-      await saveSubAvance(otNum, nombre, turnoSel, parseInt(slider.value, 10) / 100);
+      await saveSubAvance(otNum, nombre, turnoSel, pct);
       showToast('Guardado ✓');
       const filaPct = filaEl.querySelector('.sub-pct');
       if (filaPct) filaPct.textContent = slider.value + '%';
@@ -7811,13 +7721,13 @@ function toggleEditorInlineSub(cont, ot, otNum, nombre, filaEl) {
   slider.addEventListener('input', (e) => {
     display.textContent = e.target.value + '%';
     clearTimeout(debounceInline);
-    debounceInline = setTimeout(guardarInline, 550);
+    debounceInline = setTimeout(guardarInline, 350, Number(document.getElementById('turnoOverride').value), Number(e.target.value) / 100);
   });
   div.querySelectorAll('.quick-pcts-inline button').forEach((b) => {
     b.addEventListener('click', () => {
       slider.value = b.dataset.v; display.textContent = b.dataset.v + '%';
       clearTimeout(debounceInline);
-      guardarInline();
+      guardarInline(Number(document.getElementById('turnoOverride').value), Number(b.dataset.v) / 100);
     });
   });
 }
