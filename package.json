@@ -1,12 +1,15 @@
 {
   "name": "paradas-bradson",
-  "version": "1.0.0",
+  "version": "2.1.1",
   "description": "Paradas Bradson (version local, sin Firebase, para empaquetar como APK con Capacitor)",
   "private": true,
   "scripts": {
     "cap:add-android": "cap add android",
     "cap:sync": "cap sync android",
-    "cap:open-android": "cap open android"
+    "cap:open-android": "cap open android",
+    "start": "python -m http.server 8765 --bind 127.0.0.1",
+    "build:portable": "python build-portable.py",
+    "test": "node tests/integration.cjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",
@@ -17,6 +20,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^6.1.2",
-    "@capacitor/assets": "^3.0.5"
+    "@capacitor/assets": "^3.0.5",
+    "playwright": "1.62.1"
   }
 }
