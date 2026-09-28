@@ -2,7 +2,8 @@
 // Este archivo se conserva solo por las constantes que usa el resto de la app.
 const FIREBASE_CONFIG = {};
 
-const PARADA_ID = "parada_fcrm_agosto2026";
+// "let": el catálogo de paradas (paradas.js) la reasigna al cambiar de parada activa.
+let PARADA_ID = "parada_fcrm_agosto2026";
 
 // Link de la carpeta Drive con certificados de aparejos (eslingas, grilletes, tecles, etc.).
 // Vacío por ahora — el botón de la portada queda deshabilitado hasta tener la URL real.
