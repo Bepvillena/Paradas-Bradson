@@ -3,6 +3,14 @@ name: Construir APK
 # Se ejecuta solo cada vez que subes cambios, o a mano desde la pestaña
 # Actions -> "Construir APK" -> "Run workflow". El APK queda al final de la
 # ejecución, en la sección "Artifacts" (archivo paradas-bradson-apk).
+#
+# Firma FIJA: si existe el secreto KEYSTORE_BASE64 (Settings -> Secrets and
+# variables -> Actions), el APK se firma con esa clave — la misma que ya
+# tiene instalada el celular (cl.bradson.paradas.prueba) — para poder
+# actualizar la app sin desinstalar y sin perder los informes guardados.
+# Si el secreto no existe todavía, el APK se firma con una clave nueva de
+# ese mismo run y NO podrá actualizar la instalación existente (solo sirve
+# para instalar aparte).
 on:
   push:
     branches: [main]
@@ -30,7 +38,7 @@ jobs:
       - name: Armar carpeta www
         run: |
           mkdir www
-          cp index.html styles.css engine.js local-db.js seed-data.js pets-links.js firebase-config.js manifest.json sw.js www/
+          cp index.html styles.css workspace.css engine.js local-db.js paradas.js workspace.js document-editor.js seed-data.js pets-links.js firebase-config.js manifest.json sw.js www/
           cp -r assets icons www/
 
       - name: Crear proyecto Android
@@ -39,10 +47,30 @@ jobs:
           npx cap sync android
 
       # Android 11+ exige declarar que la app puede abrir archivos con otras apps
-      # (para el botón que abre el Word/PDF con Word, WPS, visor de PDF…)
+      # (para el botón que abre el Word con Word, WPS, visor de PDF…)
       - name: Permitir abrir archivos con otras apps
         run: |
           sed -i 's|<application|<queries><intent><action android:name="android.intent.action.VIEW"/><data android:mimeType="*/*"/></intent></queries>\n    <application|' android/app/src/main/AndroidManifest.xml
+
+      - name: Fijar versión
+        run: |
+          sed -i 's/versionCode [0-9]*/versionCode 20102/' android/app/build.gradle
+          sed -i 's/versionName "[^"]*"/versionName "2.1.2-prueba.1"/' android/app/build.gradle
+
+      # El plugin de Android firma "debug" con ~/.android/debug.keystore — si ese
+      # archivo ya existe antes de compilar, se usa tal cual (no genera uno nuevo).
+      # Restaurando ahí la clave real, no hace falta tocar el build.gradle.
+      - name: Restaurar la clave de firma real
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+            echo "Clave real restaurada — este APK debería poder actualizar la instalación existente."
+          else
+            echo "::warning::Falta el secreto KEYSTORE_BASE64 en el repositorio — este APK se firma con una clave nueva y NO podrá actualizar la app ya instalada en el celular."
+          fi
 
       # Ícono de la app (Android) a partir de la carpeta resources/
       - name: Generar íconos
@@ -51,6 +79,20 @@ jobs:
       - name: Compilar APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+
+      - name: Verificar firma
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Se omite la verificación (no se restauró la clave real en este run)."
+            exit 0
+          fi
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          CERT=$("$BT/apksigner" verify --print-certs "$APK" | grep "SHA-256" | head -1 | sed 's/.*: //' | tr -d ' :' | tr 'A-F' 'a-f')
+          echo "Certificado: $CERT"
+          test "$CERT" = "5966e5451bf6df9b2cc5ce3dd1620f33e36fbb8b3e25496cce194dc04f72519f" || { echo "::error::FIRMA DISTINTA — este APK NO va a actualizar la app instalada en el celular."; exit 1; }
 
       - name: Guardar APK
         uses: actions/upload-artifact@v4
