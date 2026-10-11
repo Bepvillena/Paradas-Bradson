@@ -1,0 +1,44 @@
+name: Construir version de escritorio (Windows)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - 'engine.js'
+      - 'index.html'
+      - 'styles.css'
+      - 'workspace.css'
+      - 'workspace.js'
+      - 'core.css'
+      - 'core-calculo.js'
+      - 'core-ui.js'
+      - 'document-editor.js'
+      - 'paradas.js'
+      - 'local-db.js'
+      - 'seed-data.js'
+      - 'pets-links.js'
+      - 'assets/**'
+      - 'icons/**'
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Preparar app web para escritorio
+        run: node scripts/prepare-electron.cjs
+      - name: Instalar dependencias de Electron
+        working-directory: electron
+        run: npm install
+      - name: Compilar .exe (Windows)
+        working-directory: electron
+        run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-bitacora-escritorio-windows
+          path: |
+            electron/dist/*.exe
+          if-no-files-found: error
