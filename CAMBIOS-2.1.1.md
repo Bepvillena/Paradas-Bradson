@@ -11,3 +11,9 @@
 - Nombre del informe en la lista: hasta 2 líneas.
 - Pruebas: tests/version-2.1.0.cjs comprueba que no hay opción PDF en el informe.
 Pendiente: respaldo automático a Google Drive (requiere proyecto de Google Cloud + plugin nativo de inicio de sesión).
+
+## Versión de escritorio (Windows, Electron)
+- Nueva carpeta `electron/` (proyecto Electron independiente) + `scripts/prepare-electron.cjs` + `.github/workflows/exe.yml` (compila el .exe en la nube, igual que el APK).
+- `engine.js` → `descargarBlob()`: si existe `window.escritorio` (expuesto por `electron/preload.js`), usa el diálogo nativo "Guardar como" de Windows en vez de la descarga del navegador. Importar ZIP, restaurar respaldo y adjuntar fotos ya funcionan solos en Electron (el `<input type=file>` normal no tiene las restricciones del WebView de Android).
+- No compilado ni probado todavía: este entorno no tiene Node.js. Ver `electron/LEEME.md` para compilar localmente o con GitHub Actions.
+

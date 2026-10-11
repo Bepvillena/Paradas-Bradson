@@ -1,7 +1,7 @@
 {
   "name": "paradas-bradson",
-  "version": "2.1.1",
-  "description": "Paradas Bradson (version local, sin Firebase, para empaquetar como APK con Capacitor)",
+  "version": "2.2.0",
+  "description": "CORE - Bitácora de Paradas de Planta (version local, sin Firebase, para empaquetar como APK con Capacitor)",
   "private": true,
   "scripts": {
     "cap:add-android": "cap add android",

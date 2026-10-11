@@ -1,0 +1,40 @@
+{
+  "date": "2026-09-28T00:06:09.324Z",
+  "checks": [
+    "Carga inicial: 33 actividades y panel con datos del proyecto",
+    "Búsqueda por OT",
+    "Estado vacío de búsqueda",
+    "Filtro por área",
+    "Registro de 50% en subactividad y turno seleccionado",
+    "Cambio rápido de turno no desplaza el guardado pendiente",
+    "Un 0% explícito no recupera por error el porcentaje anterior",
+    "Comentario guardado en la OT y turno elegidos",
+    "Persistencia de avances y comentarios tras recargar",
+    "Ediciones concurrentes conservan todos los campos",
+    "Alta y filtro de actividades emergentes",
+    "Avance directo de emergente",
+    "Creación de informe desde la interfaz",
+    "Apertura de detalle de informe",
+    "Word generado con plantilla original, título y comentario; XML válido",
+    "Respaldo ZIP contiene registros y archivos",
+    "Restauración recupera registros y archivos",
+    "Respaldo inválido rechazado",
+    "Descarga de respaldo desde el botón",
+    "Cinco pantallas sin desbordamiento horizontal a 360, 390, 768, 1024 y 1440 px",
+    "Detalle móvil y cierre con Escape",
+    "Recarga sin conexión y plantilla Word disponible offline",
+    "Sin errores JavaScript en los recorridos probados"
+  ],
+  "word": {
+    "name": "IT-MCEN-QA001-SUL — Verificación de mantenimiento.docx",
+    "size": 6766650,
+    "title": true,
+    "hasText": true,
+    "valid": true
+  },
+  "backup": {
+    "docs": 7,
+    "files": 1
+  },
+  "errors": []
+}

@@ -6,7 +6,10 @@
     for(const t of tables.reverse()) {
       const row=Array.from(t.querySelectorAll('tr')).find(r=>/FIRMA/i.test(r.innerText||r.textContent||''));
       if(!row)continue;
-      const cells=row.querySelectorAll('td,th'); if(cells.length>1)return cells[cells.length-1];
+      // Fila FIRMA: [etiqueta, ELABORADO POR, REVISADO POR, VALIDADO POR]. La firma
+      // propia del informe va en la primera columna de valores (Supervisor Operativo,
+      // el encargado que elabora); las otras dos ya traen sus firmas fijas.
+      const cells=row.querySelectorAll('td,th'); if(cells.length>1)return cells[1];
     }
     return null;
   }

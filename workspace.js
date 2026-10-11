@@ -21,9 +21,10 @@
     close: '<path d="m6 6 12 12M6 18 18 6"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/>',
     layers: '<path d="m12 3 10 5-10 5L2 8zm-10 9 10 5 10-5M2 16l10 5 10-5"/>',
+    target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
   };
   const icon = (name, cls='') => `<svg class="ui-icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.activity}</svg>`;
-  const routes = [['inicio','home','Resumen'],['avance','activity','Actividades'],['curva','chart','Curva S'],['informes','report','Informes'],['recursos','folder','Recursos']];
+  const routes = [['inicio','home','Resumen'],['avance','activity','Actividades'],['curva','chart','Curva S'],['control','target','Control de turno'],['informes','report','Informes'],['recursos','folder','Recursos']];
   let ready = false, query = '', area = '', status = '', mode = 'list', sort = 'area';
   let lastFocus = null, backupBusy = false, storageError = false, updateRegistration = null;
   const lastIdx = () => SEED_DATA.turnos.length - 1;
@@ -120,8 +121,50 @@
         </section>
         <section class="ui-panel ui-area-panel"><div class="ui-panel-heading"><div><h2>Avance por área</h2><p>Actividades planificadas vigentes</p></div>${icon('chart')}</div><div class="ui-area-list">${areas.map(a=>{const os=planned.filter(o=>o.area===a), den=os.reduce((n,o)=>n+o.pesoPlanHH,0), v=den?Math.round(os.reduce((n,o)=>n+o.pesoPlanHH*progress(o),0)/den*100):0;return `<button class="ui-area" data-area-shortcut="${html(a)}"><span>${html(a)}<strong>${v}%</strong></span><span class="ui-meter"><i style="width:${v}%"></i></span></button>`}).join('')}</div></section>
       </div>
+      ${paretoPanel(planned)}
       <section class="ui-panel ui-next"><div class="ui-panel-heading"><div><h2>Continuar el registro</h2><p>Primero las actividades en curso; después, las pendientes.</p></div><button class="ui-text-button" data-route="avance">Ver todas ${icon('arrow')}</button></div>${shortlist.length?shortlist.map(activityRow).join(''):'<div class="ui-empty">No quedan actividades en curso o sin iniciar. Revisa las pausadas en Actividades.</div>'}</section>
       <div class="ui-bottom-note">${icon('shield')}${respaldoAviso()}<button class="ui-text-button" data-route="recursos">Crear un respaldo ${icon('arrow')}</button></div>`;
+  }
+  // Pareto 80/20: en qué áreas se concentran las horas-hombre PENDIENTES (peso × (1-avance)).
+  // Ayuda a decidir dónde reforzar cuadrillas primero — no es un control de calidad de manufactura
+  // (eso mide si una pieza repetida se mantiene dentro de una tolerancia), es priorización de trabajo.
+  function paretoAreas(planned) {
+    const porArea = new Map();
+    planned.forEach(o => {
+      const pend = o.pesoPlanHH * (1 - progress(o));
+      if (pend <= 0.05) return;
+      porArea.set(o.area, (porArea.get(o.area) || 0) + pend);
+    });
+    const filas = [...porArea.entries()].map(([area, hh]) => ({area, hh})).sort((a, b) => b.hh - a.hh);
+    const total = filas.reduce((n, f) => n + f.hh, 0);
+    let acum = 0;
+    return { total, filas: filas.map(f => { acum += f.hh; return { ...f, pct: total ? f.hh / total * 100 : 0, pctAcum: total ? acum / total * 100 : 0 }; }) };
+  }
+  function renderParetoSvg(filas, total) {
+    const W = 560, H = 230, padL = 34, padR = 34, padT = 14, padB = 46, n = filas.length;
+    const plotW = W - padL - padR, plotH = H - padT - padB, bw = plotW / n * 0.6, gap = plotW / n;
+    const maxHH = Math.max(...filas.map(f => f.hh), 1);
+    const x = i => padL + gap * i + (gap - bw) / 2;
+    const yBar = hh => padT + plotH * (1 - hh / maxHH);
+    const yLine = pct => padT + plotH * (1 - pct / 100);
+    const barsHtml = filas.map((f, i) => `<rect x="${x(i).toFixed(1)}" y="${yBar(f.hh).toFixed(1)}" width="${bw.toFixed(1)}" height="${(padT + plotH - yBar(f.hh)).toFixed(1)}" rx="4" class="ui-pareto-bar"/>
+      <text x="${(x(i) + bw / 2).toFixed(1)}" y="${(padT + plotH + 16).toFixed(1)}" class="ui-pareto-x">${html(f.area.length > 12 ? f.area.slice(0, 11) + '…' : f.area)}</text>
+      <text x="${(x(i) + bw / 2).toFixed(1)}" y="${(yBar(f.hh) - 6).toFixed(1)}" class="ui-pareto-val">${f.hh.toFixed(0)}</text>`).join('');
+    const pts = filas.map((f, i) => `${(x(i) + bw / 2).toFixed(1)},${yLine(f.pctAcum).toFixed(1)}`).join(' ');
+    const dotsHtml = filas.map((f, i) => `<circle cx="${(x(i) + bw / 2).toFixed(1)}" cy="${yLine(f.pctAcum).toFixed(1)}" r="3.4" class="ui-pareto-dot"/>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" class="ui-pareto-svg" role="img" aria-label="Pareto de horas-hombre pendientes por área">
+      <line x1="${padL}" y1="${yLine(80).toFixed(1)}" x2="${W - padR}" y2="${yLine(80).toFixed(1)}" class="ui-pareto-80"/>
+      <text x="${W - padR}" y="${(yLine(80) - 5).toFixed(1)}" class="ui-pareto-80-label" text-anchor="end">80%</text>
+      ${barsHtml}<polyline points="${pts}" class="ui-pareto-line"/>${dotsHtml}
+    </svg>`;
+  }
+  function paretoPanel(planned) {
+    const { total, filas } = paretoAreas(planned);
+    if (!filas.length) return `<section class="ui-panel ui-pareto"><div class="ui-panel-heading"><div><h2>Pareto de trabajo pendiente</h2><p>Áreas que concentran las horas-hombre por registrar</p></div>${icon('target')}</div><div class="ui-empty" style="margin:0 20px 20px;">Sin horas-hombre pendientes: todo lo planificado vigente está al 100%.</div></section>`;
+    const top = filas.slice(0, 8);
+    const corte = top.findIndex(f => f.pctAcum >= 80);
+    const nota = corte >= 0 ? `${corte + 1} de ${top.length} áreas concentran el 80% del trabajo pendiente (${top.slice(0, corte + 1).reduce((n, f) => n + f.hh, 0).toFixed(0)} de ${total.toFixed(0)} HH).` : `Reparte casi por igual entre las ${top.length} áreas con trabajo pendiente.`;
+    return `<section class="ui-panel ui-pareto"><div class="ui-panel-heading"><div><h2>Pareto de trabajo pendiente</h2><p>Áreas que concentran las horas-hombre por registrar (regla 80/20)</p></div>${icon('target')}</div><div class="ui-pareto-body">${renderParetoSvg(top, total)}<p class="ui-pareto-note">${nota}</p></div></section>`;
   }
   function respaldoAviso() {
     let t=0;try{t=Number(localStorage.getItem('paradas.ultimoRespaldo'))||0;}catch(e){}
@@ -157,7 +200,7 @@
   }
   function setupShell() {
     const nav=document.createElement('nav');nav.id='workspaceNav';nav.setAttribute('aria-label','Navegación principal');
-    nav.innerHTML=`<a class="ui-brand" href="#inicio" data-route="inicio"><img class="ui-brand-logo" src="./icons/icon-192.png" width="44" height="44" alt=""><span>PARADAS<small>BRADSON</small></span></a><div class="ui-nav-label">ESPACIO DE TRABAJO</div><div class="ui-nav-items">${routes.map(([id,i,label])=>`<button type="button" data-route="${id}">${icon(i)}<span>${label}</span>${id==='avance'?'<span class="ui-nav-count">'+allOts().length+'</span>':''}</button>`).join('')}</div><div class="ui-nav-bottom"><div class="ui-local-card">${icon('shield')}<strong>Listo para terreno</strong><p>Trabaja sin conexión.<br>Guarda en tu dispositivo.</p></div><div class="ui-account"><span>PB</span><div>Paradas Bradson<small>Espacio local · v2.0</small></div></div></div>`;
+    nav.innerHTML=`<a class="ui-brand" href="#inicio" data-route="inicio"><img class="ui-brand-logo" src="./icons/icon-192.png" width="44" height="44" alt=""><span>CORE<small>BITÁCORA DE PARADAS</small></span></a><div class="ui-nav-label">ESPACIO DE TRABAJO</div><div class="ui-nav-items">${routes.map(([id,i,label])=>`<button type="button" data-route="${id}">${icon(i)}<span>${label}</span>${id==='avance'?'<span class="ui-nav-count">'+allOts().length+'</span>':''}</button>`).join('')}</div><div class="ui-nav-bottom"><div class="ui-local-card">${icon('shield')}<strong>Listo para terreno</strong><p>Trabaja sin conexión.<br>Guarda en tu dispositivo.</p></div><div class="ui-account"><span>CO</span><div>Bitácora de Paradas de Planta<small>Espacio local · v2.2</small></div></div></div>`;
     document.body.prepend(nav);
     const top=document.createElement('div');top.className='ui-topbar';top.innerHTML=`<div class="ui-breadcrumb">Espacio de trabajo <span>/</span><strong id="uiPageName">Resumen</strong></div><div class="ui-topbar-right"><span id="uiSaveStatus" role="status">${icon('shield')}Datos en este dispositivo</span><span class="ui-avatar">PB</span></div>`;
     document.querySelector('.app').prepend(top);
@@ -213,7 +256,7 @@
     $('uiPageName').textContent=routes.find(r=>r[0]===active)?.[2]||'Resumen';
     if(page==='inicio')renderHome();if(page==='avance')renderActivities();if(page==='recursos')renderResources();
     addDialogAccessibility();
-    document.title=`${$('uiPageName').textContent} · Paradas Bradson`;
+    document.title=`${$('uiPageName').textContent} · CORE Bitácora de Paradas`;
   }
   async function exportBackup() {
     if(backupBusy)return;

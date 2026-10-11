@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Paradas Bradson</title>
+<title>CORE - Bitácora de Paradas de Planta</title>
 <meta name="theme-color" content="#087f73">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
@@ -430,6 +430,7 @@
   }
 </style>
 <link rel="stylesheet" href="./workspace.css">
+<link rel="stylesheet" href="./core.css">
 </head>
 <body>
 <div class="app">
@@ -702,8 +703,10 @@
     <h2>Nuevo informe</h2>
     <p class="meta">Agrupa las actividades que forman este informe. El código y el título arman el nombre que va en la portada, el encabezado de cada página y el índice del Word.</p>
 
+    <div id="campoInformeNumeroWrap">
     <label style="display:block; font-size:12px; color:var(--ink-muted); margin:14px 0 6px;">N° de informe (para IT-MCEN-XXX-SUL)</label>
     <input type="text" id="informeNumero" placeholder="Ej: 003" style="width:100%; padding:12px; border-radius:10px; background:var(--navy-soft); color:var(--ink); border:1px solid var(--line); font-family:var(--sans); font-size:14px; margin-bottom:14px;">
+    </div>
 
     <label style="display:block; font-size:12px; color:var(--ink-muted); margin-bottom:6px;">Título del trabajo</label>
     <input type="text" id="informeTituloGeneral" placeholder="Ej: Cambio de Ductos y Válvulas en Área Fallback" style="width:100%; padding:12px; border-radius:10px; background:var(--navy-soft); color:var(--ink); border:1px solid var(--line); font-family:var(--sans); font-size:14px; margin-bottom:14px;">
@@ -760,7 +763,31 @@
 
 <!-- Marca propia de este cliente (nombre + color en RGB para el PDF) -->
 <script>
-  window.BRANDING = { empresa: "SEMIVA", cliente: "CENTINELA", area: "SULFUROS", colorRGB: [31, 160, 165], logoURL: "./assets/logo-centinela.jpg", logoDimarzaURL: "./assets/logo-dimarza.png" };
+  window.BRANDING = { empresa: "SEMIVA", cliente: "CENTINELA", area: "SULFUROS", colorRGB: [31, 160, 165], logoURL: "./assets/logo-centinela.jpg", logoDimarzaURL: "./assets/logo-dimarza.png",
+    // Formato del código de informe (usa {numero}) y la abreviatura que la
+    // plantilla Word trae escrita corta ("MCEN") y su forma completa a la que
+    // se expande — cada parada/minera trae la suya propia (ver paradas.js).
+    codigoInforme: "IT-MCEN-{numero}-SUL", abreviaturaClave: "MCEN", abreviaturaCompleta: "MINERA CENTINELA" };
+
+  // Formatos de informe incluidos "por defecto": cada uno trae su plantilla Word
+  // real y su marca (colores, código de informe, logos). Una parada elige uno
+  // (campo "formato"); lo que no declare, lo hereda de este formato.
+  window.FORMATOS_INFORME = {
+    centinela: {
+      nombre: "Centinela · SEMIVA",
+      templateUrl: "./assets/plantilla-informe.docx",
+      brand: { empresa: "SEMIVA", cliente: "CENTINELA", area: "SULFUROS", colorRGB: [31, 160, 165], logoURL: "./assets/logo-centinela.jpg", logoDimarzaURL: "./assets/logo-dimarza.png",
+        codigoInforme: "IT-MCEN-{numero}-SUL", abreviaturaClave: "MCEN", abreviaturaCompleta: "MINERA CENTINELA",
+        encabezadoTabla: { fill: "92D050", texto: "" }, campoArea: false }
+    },
+    bhp: {
+      nombre: "BHP Escondida · DIMARZA",
+      templateUrl: "./assets/plantilla-informe-bhp.docx",
+      brand: { empresa: "DIMARZA", cliente: "BHP ESCONDIDA", area: "", colorRGB: [204, 0, 0], logoURL: "./assets/logo-bhp.png", logoDimarzaURL: "./assets/logo-dimarza.png",
+        codigoInforme: "IT-MEL-{numero}", abreviaturaClave: "MEL", abreviaturaCompleta: "MINERA ESCONDIDA LIMITADA",
+        encabezadoTabla: { fill: "CC0000", texto: "FFFFFF" }, campoArea: true, registroFotosSinSaltoInicial: true }
+    }
+  };
 </script>
 
 <!-- Antes iba aquí el SDK real de Firebase (firebase-app/firestore/storage-compat
@@ -786,6 +813,8 @@
 <script src="./paradas.js"></script>
 <script src="./engine.js"></script>
 <script src="./workspace.js"></script>
+<script src="./core-calculo.js"></script>
+<script src="./core-ui.js"></script>
 <script src="./document-editor.js"></script>
 </body>
 </html>

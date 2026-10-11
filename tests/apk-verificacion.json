@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0-prueba.1",
+  "package": "cl.bradson.paradas.prueba",
+  "size_bytes": 18535327,
+  "sha256": "f75a220f2eaeea2dfcdec8425bda48ca3bf74b058c0d1fe7ef997b5926daef85",
+  "build": "successful",
+  "apk_signature_v1": true,
+  "apk_signature_v2": true,
+  "bundled_web_files_verified": 24,
+  "android_device_tested": false
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CORE Bitácora de Paradas</string>
+    <string name="title_activity_main">CORE Bitácora de Paradas</string>
+    <string name="package_name">cl.core.bitacora.paradas.previa</string>
+    <string name="custom_url_scheme">cl.core.bitacora.paradas.previa</string>
+</resources>

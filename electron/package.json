@@ -1,0 +1,37 @@
+{
+  "name": "core-bitacora-paradas-desktop",
+  "version": "2.2.0",
+  "description": "CORE - Bitácora de Paradas de Planta - versión de escritorio (Windows)",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "author": "CORE",
+  "build": {
+    "appId": "cl.core.bitacora.paradas.desktop",
+    "productName": "CORE - Bitácora de Paradas de Planta",
+    "asar": true,
+    "directories": { "output": "dist" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "www/**/*"
+    ],
+    "win": {
+      "target": [{ "target": "portable", "arch": ["x64"] }],
+      "artifactName": "CORE-Bitacora-de-Paradas.exe",
+      "icon": "www/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}

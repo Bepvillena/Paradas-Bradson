@@ -1,4 +1,4 @@
-const CACHE_NAME = 'curva-s-local-v7-211';
+const CACHE_NAME = 'curva-s-local-v7-core1';
 
 // ---- Archivos locales (fotos/firmas/anexos guardados en IndexedDB, ver
 // local-db.js) — el service worker corre en su propio contexto y no puede
@@ -32,6 +32,11 @@ const ASSETS = [
   './paradas.js',
   './document-editor.js',
   './assets/plantilla-informe.docx',
+  './assets/plantilla-informe-bhp.docx',
+  './assets/logo-bhp.png',
+  './core.css',
+  './core-calculo.js',
+  './core-ui.js',
   './assets/logo-centinela.jpg',
   './assets/logo-dimarza.png',
   './icons/icon-192.png',
