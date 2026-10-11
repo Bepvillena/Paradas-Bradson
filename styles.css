@@ -970,6 +970,9 @@ body.en-inicio nav.tabs{ display:none; }
    hueco vacío al lado de "Word", que sí se ve porque además es -primary). */
 .editor-barra .btn-mini{ color: var(--brand); border-color: var(--brand); }
 .editor-barra .btn-mini-primary{ color: #fff; }
+/* Botón "+ Añadir firma" dentro de la celda del Word (nunca había tenido estilo propio). */
+.doc-firma-control{display:inline-flex;align-items:center;justify-content:center;min-width:100px;min-height:36px;padding:4px 8px;margin:5px;border:1px dashed #168d87;border-radius:5px;background:#f1faf8;color:#0b756d;font:600 11px Arial,sans-serif;cursor:pointer}
+.doc-firma-control img{display:block;max-width:110px;max-height:44px;object-fit:contain}
 .editor-pantalla .preview-word-loading{ color:#d8dadc; }
 .editor-contenedor{ flex:1; min-height:0; overflow:auto; padding:16px 0 40px; -webkit-overflow-scrolling:touch; }
 .editor-contenedor .docx-preview-wrapper{ background:transparent !important; padding:0 !important; }

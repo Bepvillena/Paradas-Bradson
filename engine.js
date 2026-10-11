@@ -886,6 +886,12 @@ function ensureVistaInformeDetalle() {
 
     <button type="button" class="btn-entrar" id="btnVerActividadesInforme" style="width:100%; margin-bottom:16px;">📋 Ver actividades de este informe</button>
 
+    <div id="bloqueCamposCentinela">
+    <div class="informe-form-bloque" id="bloqueAreaInforme" style="display:none;">
+      <label class="rotulo-mini">Área del informe</label>
+      <input type="text" id="inputInformeArea" placeholder="Ej: Laguna Seca Línea 2">
+    </div>
+
     <div class="informe-form-bloque">
       <label class="rotulo-mini">Foto de portada</label>
       <div id="detallePortadaPreviewWrap"></div>
@@ -908,9 +914,9 @@ function ensureVistaInformeDetalle() {
 
     <div class="informe-form-bloque">
       <label class="rotulo-mini">Administradores de contrato</label>
-      <label>Administrador de Contratos Centinela</label>
+      <label id="lblAdminCliente">Administrador de Contratos</label>
       <input type="text" id="inputAdminCentinela" placeholder="Nombre">
-      <label>Administrador de Contratos SEMIVA Chile SPA</label>
+      <label id="lblAdminEmpresa">Administrador de Contratos</label>
       <input type="text" id="inputAdminSemiva" placeholder="Nombre">
     </div>
 
@@ -959,6 +965,8 @@ function ensureVistaInformeDetalle() {
       <label class="rotulo-mini">Recomendaciones por actividad (opcional)</label>
       <div id="recomendacionesListWrap"></div>
     </div>
+    </div>
+
 
     <div class="informe-card-acciones" style="margin-top:6px; margin-bottom:24px;">
       <a href="#" target="_blank" rel="noopener" class="btn-mini" id="linkAbrirWordInforme" style="display:none;">Abrir Word</a>
@@ -998,9 +1006,9 @@ function ensureVistaInformeDetalle() {
   });
   document.getElementById('inputAnexo').addEventListener('change', (e) => subirAnexoInforme(e.target.files[0]));
 
-  ['inputObjetivoPrincipal', 'inputAdminCentinela', 'inputAdminSemiva', 'inputEncargadoNombre', 'inputHerramientas', 'inputConsumibles'].forEach((id) => {
+  ['inputObjetivoPrincipal', 'inputInformeArea', 'inputAdminCentinela', 'inputAdminSemiva', 'inputEncargadoNombre', 'inputHerramientas', 'inputConsumibles'].forEach((id) => {
     const campoMap = {
-      inputObjetivoPrincipal: 'objetivoPrincipal', inputAdminCentinela: 'adminCentinela', inputAdminSemiva: 'adminSemiva',
+      inputObjetivoPrincipal: 'objetivoPrincipal', inputInformeArea: 'area', inputAdminCentinela: 'adminCentinela', inputAdminSemiva: 'adminSemiva',
       inputEncargadoNombre: 'encargadoNombre', inputHerramientas: 'herramientasTexto', inputConsumibles: 'consumiblesTexto',
     };
     // Guardado automático: mientras se escribe (con una pausa de ~0,7 s), al salir
@@ -1406,7 +1414,9 @@ function abrirInformeDetalle(id) {
 
   document.getElementById('detalleInformeNombre').textContent = inf.nombre || '(sin nombre)';
   document.getElementById('inputObjetivoPrincipal').value = inf.objetivoPrincipal || '';
+  document.getElementById('inputInformeArea').value = inf.area || '';
   document.getElementById('inputAdminCentinela').value = inf.adminCentinela || '';
+  aplicarEtiquetasDeFormato();
   document.getElementById('inputAdminSemiva').value = inf.adminSemiva || '';
   document.getElementById('inputEncargadoNombre').value = inf.encargadoNombre || '';
   document.getElementById('inputHerramientas').value = inf.herramientasTexto || '';
@@ -1429,7 +1439,23 @@ function abrirInformeDetalle(id) {
   irAVista('informe-detalle');
 }
 
+// Textos de la interfaz que dependen del formato de informe de la parada
+// (cliente/empresa de los administradores de contrato, código de ejemplo,
+// y el campo "Área" que solo algunos formatos llevan).
+function aplicarEtiquetasDeFormato() {
+  const b = window.BRANDING || {};
+  const cap = (t) => String(t || '');
+  const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+  set('lblAdminCliente', 'Administrador de Contratos ' + cap(b.cliente));
+  set('lblAdminEmpresa', 'Administrador de Contratos ' + cap(b.empresa) + ' Chile SPA');
+  const areaBloque = document.getElementById('bloqueAreaInforme');
+  if (areaBloque) areaBloque.style.display = b.campoArea ? '' : 'none';
+  const lblNum = document.querySelector('#campoInformeNumeroWrap label');
+  if (lblNum && b.codigoInforme) lblNum.textContent = 'N° de informe (para ' + b.codigoInforme.replace('{numero}', 'XXX') + ')';
+}
+
 function abrirModalInforme() {
+  aplicarEtiquetasDeFormato();
   document.getElementById('informeNumero').value = '';
   document.getElementById('informeTituloGeneral').value = '';
   informePendingOts = [];
@@ -1453,18 +1479,60 @@ function abrirModalInforme() {
   document.getElementById('informeBackdrop').classList.add('open');
 }
 
+// Código del informe (ej. "IT-MCEN-003-SUL"): cada minera/parada trae su
+// propio formato en BRANDING.codigoInforme (ver index.html/paradas.js) — así
+// un formato nuevo (misma plantilla, otros datos) no necesita tocar código,
+// solo declarar su propio patrón. Sin patrón configurado, no hay código.
+// Colores del encabezado de las tablas que arma el generador: cada formato los declara en BRANDING.encabezadoTabla ({fill, texto}); sin eso, verde con texto negro (Centinela).
+function colorEncabezadoTabla() {
+  const c = (window.BRANDING && window.BRANDING.encabezadoTabla) || {};
+  return { fill: c.fill || '92D050', colorXml: c.texto ? `<w:color w:val="${c.texto}"/>` : '<w:color w:val="000000" w:themeColor="text1"/>' };
+}
+
+function codigoInformeDe(numero) {
+  const patron = window.BRANDING?.codigoInforme;
+  if (!patron || !numero) return '';
+  return patron.replace('{numero}', numero);
+}
+
+// Tabla de nivel superior (la más externa) que contiene la posición dada →
+// {ini, fin} o null. Cuenta anidamiento, a diferencia de lastIndexOf('<w:tbl>').
+function tablaExternaQueContiene(xml, pos) {
+  const re = /<w:tbl>|<\/w:tbl>/g;
+  let prof = 0, ini = -1, m;
+  while ((m = re.exec(xml))) {
+    if (m[0] === '<w:tbl>') { if (prof++ === 0) ini = m.index; }
+    else if (--prof === 0) {
+      const fin = m.index + '</w:tbl>'.length;
+      if (pos >= ini && pos < fin) return { ini, fin };
+      if (ini > pos) return null;
+    }
+  }
+  return null;
+}
+
+// "JOSE DAVID CHICATA MOSCOSO" → "J. C. M." (nombre + los dos apellidos);
+// con dos palabras, "VICTOR AROSQUIPA" → "V. A.". Es el formato que traen las
+// plantillas en "ELABORADO POR:".
+function inicialesDeNombre(nombre) {
+  const p = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+  if (!p.length) return '';
+  const elegidas = p.length >= 4 ? [p[0], p[p.length - 2], p[p.length - 1]] : p;
+  return elegidas.map((w) => w[0].toUpperCase() + '.').join(' ');
+}
+
 async function guardarInformeAdmin() {
   const numero = document.getElementById('informeNumero').value.trim();
   const tituloGeneral = document.getElementById('informeTituloGeneral').value.trim();
   if (!numero) { showToast('Escribe el N° de informe'); return; }
   if (!tituloGeneral) { showToast('Escribe el título del trabajo'); return; }
   if (!informePendingOts.length) { showToast('Elige al menos una actividad'); return; }
-  if (state.informes.some((i) => i.numero === numero)) {
+  if (numero && state.informes.some((i) => i.numero === numero)) {
     showToast(`Ya existe un informe con el N° ${numero} — revisa la lista antes de crear otro`);
     return;
   }
-  const codigo = `IT-MCEN-${numero}-SUL`;
-  const nombre = `${codigo} — ${tituloGeneral}`;
+  const codigo = codigoInformeDe(numero);
+  const nombre = codigo ? `${codigo} — ${tituloGeneral}` : `${tituloGeneral} — ${new Date().toISOString().slice(0, 10)}`;
   const btn = document.getElementById('informeSave');
   if (btn.disabled) return;
   btn.disabled = true; btn.textContent = 'Guardando…';
@@ -2003,7 +2071,7 @@ function buildFilaFechaRegistroWord(fechaTexto) {
 
 function buildFilaImagenHeaderWord(numA, numB) {
   const pid = randParaIdWord();
-  const celda = (num) => `<w:tc><w:tcPr><w:tcW w:w="${REGISTRO_FOTOS_TC_ANCHO}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="92D050"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr></w:pPr>${num ? `<w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/><w:color w:val="000000" w:themeColor="text1"/></w:rPr><w:t xml:space="preserve">IMAGEN ${num}</w:t></w:r>` : ''}</w:p></w:tc>`;
+  const celda = (num) => `<w:tc><w:tcPr><w:tcW w:w="${REGISTRO_FOTOS_TC_ANCHO}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="${colorEncabezadoTabla().fill}"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/>${colorEncabezadoTabla().colorXml}</w:rPr></w:pPr>${num ? `<w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:eastAsia="Cambria" w:hAnsi="Century Gothic"/><w:b/>${colorEncabezadoTabla().colorXml}</w:rPr><w:t xml:space="preserve">IMAGEN ${num}</w:t></w:r>` : ''}</w:p></w:tc>`;
   return `<w:tr w14:paraId="${pid}" w14:textId="${pid}"><w:trPr><w:cantSplit/><w:trHeight w:val="283"/><w:jc w:val="center"/></w:trPr>${celda(numA)}${celda(numB)}</w:tr>`;
 }
 
@@ -2127,7 +2195,9 @@ function buildFilaMarcaEditorWord(texto) {
 // hoja aunque sobrara espacio. Ahora es solo un párrafo en blanco de
 // separación (igual que en el registro de parada) y es Word quien decide
 // sola cuándo pasar de página, según lo que realmente entra — con las fotos
-// más chicas (INFORME_FOTO_MAX_ALTO_CM) entran 3 filas/6 fotos por hoja.
+// más chicas (INFORME_FOTO_MAX_ALTO_CM) entran 3 filas/6 fotos por hoja. Al
+// no forzar nunca el salto, el título y el primer par siempre comparten hoja
+// cuando entran (lo que pide el formato BHP) sin necesitar un caso especial.
 function buildSeparadorRegistroFotosPreparativosWord() {
   const p1 = randParaIdWord();
   const rPr = '<w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/></w:rPr>';
@@ -2169,7 +2239,7 @@ const RECOMENDACIONES_NUM_ID = 16;
 
 function buildFilaItemTextoWord(numId, parrafos) {
   const pid = randParaIdWord();
-  const itemCell = `<w:tc><w:tcPr><w:tcW w:w="1134" w:type="dxa"/><w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders><w:shd w:val="clear" w:color="auto" w:fill="92D050"/><w:tcMar><w:top w:w="66" w:type="dxa"/><w:left w:w="115" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="115" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${numId}"/></w:numPr><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:bCs/><w:color w:val="000000" w:themeColor="text1"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr></w:p></w:tc>`;
+  const itemCell = `<w:tc><w:tcPr><w:tcW w:w="1134" w:type="dxa"/><w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders><w:shd w:val="clear" w:color="auto" w:fill="${colorEncabezadoTabla().fill}"/><w:tcMar><w:top w:w="66" w:type="dxa"/><w:left w:w="115" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="115" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${numId}"/></w:numPr><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:b/><w:bCs/>${colorEncabezadoTabla().colorXml}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr></w:p></w:tc>`;
   const bodyParas = parrafos.map((p) =>
     `<w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:ind w:right="56"/><w:jc w:val="both"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr><w:r><w:rPr>${p.bold ? '<w:b/><w:bCs/>' : ''}<w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(p.text)}</w:t></w:r></w:p>`
   ).join('');
@@ -2310,15 +2380,19 @@ function reemplazarTodosLosSdtDeCampo(xml, nombreCampo, nuevoTexto) {
     const sdtContentEnd = xml.indexOf('</w:sdtContent>', sdtContentStart);
     if (sdtContentStart === -1 || sdtContentEnd === -1) continue;
     const bloque = xml.slice(sdtContentStart, sdtContentEnd);
-    const m = bloque.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/);
-    if (!m) continue;
-    const runStart = sdtContentStart + m.index;
-    reemplazos.push({ start: runStart, end: runStart + m[0].length, prefix: m[0].slice(0, m[0].indexOf('>') + 1) });
+    const todos = [...bloque.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)];
+    if (!todos.length) continue;
+    // Un texto partido en varios runs ("IT-MEL-" + "XXX"): el primero lleva el
+    // texto nuevo y los demás se vacían, si no quedaría pegado el resto viejo.
+    todos.forEach((m, k) => {
+      const runStart = sdtContentStart + m.index;
+      reemplazos.push({ start: runStart, end: runStart + m[0].length, prefix: m[0].slice(0, m[0].indexOf('>') + 1), vaciar: k > 0 });
+    });
   }
   reemplazos.sort((a, b) => b.start - a.start);
   let out = xml;
-  reemplazos.forEach(({ start, end, prefix }) => {
-    out = out.slice(0, start) + prefix + escXmlWord(nuevoTexto) + '</w:t>' + out.slice(end);
+  reemplazos.forEach(({ start, end, prefix, vaciar }) => {
+    out = out.slice(0, start) + prefix + (vaciar ? '' : escXmlWord(nuevoTexto)) + '</w:t>' + out.slice(end);
   });
   return out;
 }
@@ -2438,9 +2512,9 @@ const CUMPLIMIENTO_ANCLA = 'CUMPLIMIENTO MECÁNICO SOBRE ACTIVIDADES';
 const CUMPLIMIENTO_COL_TAG = 1500, CUMPLIMIENTO_COL_OT = 1500, CUMPLIMIENTO_COL_DESC = 5700, CUMPLIMIENTO_COL_PCT = 1506;
 
 function buildCeldaCumplimientoWord(ancho, texto, esHeader) {
-  const shd = esHeader ? '<w:shd w:val="clear" w:color="auto" w:fill="92D050"/>' : '';
+  const shd = esHeader ? `<w:shd w:val="clear" w:color="auto" w:fill="${colorEncabezadoTabla().fill}"/>` : '';
   const bold = esHeader ? '<w:b/>' : '';
-  return `<w:tc><w:tcPr><w:tcW w:w="${ancho}" w:type="dxa"/><w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders>${shd}<w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/>${bold}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/>${bold}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(texto)}</w:t></w:r></w:p></w:tc>`;
+  return `<w:tc><w:tcPr><w:tcW w:w="${ancho}" w:type="dxa"/><w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders>${shd}<w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="Sinespaciado"/><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/>${bold}${esHeader ? colorEncabezadoTabla().colorXml : ''}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/>${bold}${esHeader ? colorEncabezadoTabla().colorXml : ''}<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr><w:t xml:space="preserve">${escXmlWord(texto)}</w:t></w:r></w:p></w:tc>`;
 }
 
 function buildFilaCumplimientoWord(tag, ot, desc, pct, esHeader) {
@@ -2570,22 +2644,38 @@ async function generateInformeWordBlob(informe, opciones = {}) {
   if (!docFile) throw new Error('La plantilla no tiene word/document.xml — ¿es un .docx válido?');
   let xml = docFile.asText();
 
-  // "MCEN" (abreviatura de Minera Centinela) → nombre completo. Solo estas 2
-  // ocurrencias puntuales en la plantilla (intro de conclusiones y de
-  // recomendaciones) — no toca el código del informe (IT-MCEN-XXX-SUL, que
-  // sí debe conservar "MCEN").
-  xml = xml.split('<w:t>MCEN</w:t>').join('<w:t>MINERA CENTINELA</w:t>');
+  // Abreviatura corta que trae la plantilla (ej. "MCEN") → nombre completo
+  // ("MINERA CENTINELA"). Cada minera/parada declara la suya en BRANDING —
+  // sin eso configurado, no se toca nada. Solo estas 2 ocurrencias puntuales
+  // en la plantilla (intro de conclusiones y de recomendaciones) — no toca
+  // el código del informe, que sí debe conservar la sigla corta.
+  if (window.BRANDING?.abreviaturaClave && window.BRANDING?.abreviaturaCompleta) {
+    xml = xml.split(`<w:t>${window.BRANDING.abreviaturaClave}</w:t>`).join(`<w:t>${window.BRANDING.abreviaturaCompleta}</w:t>`);
+    // Bug encontrado y corregido: si no se guarda aquí, actualizarTituloInformeEnWord()
+    // vuelve a leer 'word/document.xml' DESDE EL ZIP (todavía con la sigla sin
+    // expandir) para hacer sus propios cambios, y esa relectura de más abajo pisaba
+    // este reemplazo — la sigla completa nunca llegaba a aparecer en el Word final.
+    zip.file('word/document.xml', xml);
+  }
 
-  // Título del informe (código IT-MCEN-XXX-SUL + título del trabajo): son
+  // Título del informe (código del informe + título del trabajo): son
   // content controls repetidos en portada, encabezado de cada página, índice
   // y conclusiones/recomendaciones — se actualizan todas las apariciones a
   // la vez. Si el informe no tiene número/título propio todavía (viejo, o
   // recién creado sin completar), se deja el de la plantilla.
-  if (informe.numero || informe.tituloGeneral) {
-    actualizarTituloInformeEnWord(zip, {
-      Nombre14: informe.numero ? `IT-MCEN-${informe.numero}-SUL` : undefined,
+  const nombreEncargado = (informe.encargadoNombre || '').trim();
+  const areaInforme = (informe.area || '').trim();
+  if (informe.numero || informe.tituloGeneral || nombreEncargado || areaInforme) {
+    const campos = {
+      Nombre14: informe.numero ? codigoInformeDe(informe.numero) : undefined,
       Nombre0: informe.tituloGeneral ? informe.tituloGeneral.toUpperCase() : undefined,
-    });
+    };
+    // Iniciales del supervisor a cargo en "ELABORADO POR:" del encabezado
+    // (Nombre10, en ambas plantillas); en BHP además el nombre de la celda
+    // ENCARGADO es un control enlazado (Nombre19) y el área va en Nombre1.
+    if (nombreEncargado) { campos.Nombre10 = inicialesDeNombre(nombreEncargado); campos.Nombre19 = nombreEncargado; }
+    if (areaInforme) campos.Nombre1 = areaInforme.toUpperCase();
+    actualizarTituloInformeEnWord(zip, campos);
     // document.xml se acaba de reescribir en el zip por actualizarTituloInformeEnWord
     // (para sus propias apariciones) — hay que releerlo para seguir editando
     // sobre esa versión actualizada, si no el resto de esta función pisaría
@@ -2736,7 +2826,7 @@ async function generateInformeWordBlob(informe, opciones = {}) {
     try {
       const encargadoIdx = xml.indexOf(ENCARGADO_ANCLA);
       if (encargadoIdx !== -1) {
-        if (informe.encargadoNombre && informe.encargadoNombre.trim()) {
+        if (informe.encargadoNombre && informe.encargadoNombre.trim() && !xml.includes('ns0:Nombre19[1]')) {
           xml = reemplazarValorCeldaWord(xml, encargadoIdx, informe.encargadoNombre.trim());
         }
         if (informe.encargadoFirmaUrl) {
@@ -3304,8 +3394,32 @@ async function generateInformeWordBlob(informe, opciones = {}) {
 
       const fotosRowsXml = (fotosEmbebidas.length ? buildBloqueRegistroFotosWord(fotosEmbebidas, opciones.modoEditor) : '')
         + (opciones.modoEditor ? buildFilaMarcaEditorWord('⟦AÑADIR:fotos⟧') : '');
-      const bookmarksHuerfanosParadaFotos = extraerBookmarkEndsHuerfanos(xml.slice(primeraFilaInicio, ultimaFilaExternaEndIdx));
-      xml = xml.slice(0, primeraFilaInicio) + fotosRowsXml + bookmarksHuerfanosParadaFotos + xml.slice(ultimaFilaExternaEndIdx);
+      // Algunas plantillas (BHP) reparten el registro en VARIAS tablas externas
+      // (una por hoja, con saltos de página entre ellas) en vez de una sola:
+      // en ese caso se cierra la primera tabla con las filas nuevas y se borra
+      // todo hasta el final de la última, saltos de página y tablas incluidos.
+      const tExtPrimera = tablaExternaQueContiene(xml, primeraFilaInicio);
+      let tExtUltima = tablaExternaQueContiene(xml, ultimaFilaExternaEndIdx - 1);
+      // Si el texto "IMAGEN" viene partido en varios runs, el último "IMAGEN " que se ve puede no ser el último real: se toma la última tabla de la sección (antes del título ANEXOS).
+      const anexosIdx = xml.indexOf('>ANEXOS<', fotosAnclaIdx);
+      if (anexosIdx !== -1 && tExtPrimera) {
+        let ultima = null, cursorT = tExtPrimera.fin;
+        for (;;) {
+          const ini = xml.indexOf('<w:tbl>', cursorT);
+          if (ini === -1 || ini > anexosIdx) break;
+          const t = tablaExternaQueContiene(xml, ini);
+          if (!t) break;
+          ultima = t; cursorT = t.fin;
+        }
+        if (ultima && (!tExtUltima || ultima.ini > tExtUltima.ini)) tExtUltima = ultima;
+      }
+      if (tExtPrimera && tExtUltima && tExtPrimera.ini !== tExtUltima.ini) {
+        const bmHuerf = extraerBookmarkEndsHuerfanos(xml.slice(primeraFilaInicio, tExtUltima.fin));
+        xml = xml.slice(0, primeraFilaInicio) + fotosRowsXml + bmHuerf + '</w:tbl>' + xml.slice(tExtUltima.fin);
+      } else {
+        const bookmarksHuerfanosParadaFotos = extraerBookmarkEndsHuerfanos(xml.slice(primeraFilaInicio, ultimaFilaExternaEndIdx));
+        xml = xml.slice(0, primeraFilaInicio) + fotosRowsXml + bookmarksHuerfanosParadaFotos + xml.slice(ultimaFilaExternaEndIdx);
+      }
     }
   }
 
@@ -3544,7 +3658,11 @@ async function generateInformeWordBlob(informe, opciones = {}) {
     const otsConRecomendacion = ots.filter((ot) => (opciones.modoEditor
       ? Object.prototype.hasOwnProperty.call(recomendaciones, ot.otNum)
       : (recomendaciones[ot.otNum] || '').trim()));
-    const introIdx = xml.indexOf(RECOMENDACIONES_INTRO_ANCLA);
+    // La frase de la introducción cambia según el formato (Centinela: 'recomienda'; BHP: 'oportunidades de mejora').
+    // (la de BHP también aparece antes, en el objetivo: ahí se toma la ÚLTIMA aparición, que es la de esta sección).
+    const introCentinela = xml.indexOf(RECOMENDACIONES_INTRO_ANCLA);
+    const introBhp = xml.lastIndexOf('oportunidades de mejora');
+    const introIdx = introCentinela !== -1 ? introCentinela : introBhp;
     if (introIdx !== -1) {
       const tblStart = xml.indexOf('<w:tbl>', introIdx);
       const headerRowEndRecomendaciones = tblStart !== -1 ? xml.indexOf('</w:tr>', tblStart) + '</w:tr>'.length : -1;
@@ -3588,7 +3706,13 @@ async function generateInformeWordBlob(informe, opciones = {}) {
   // revisa acá siempre, antes de entregar el archivo.
   const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
   const celdasMalas = Array.from(parseCheck.getElementsByTagNameNS(W_NS, 'tc')).filter((tc) => {
-    const hijos = Array.from(tc.childNodes).filter((n) => n.nodeType === 1);
+    let hijos = Array.from(tc.childNodes).filter((n) => n.nodeType === 1);
+    // Un control de contenido (sdt) de bloque al final de la celda es válido
+    // si lo que contiene termina en párrafo (así viene la plantilla BHP).
+    while (hijos.length && hijos[hijos.length - 1].localName === 'sdt') {
+      const contenido = Array.from(hijos[hijos.length - 1].childNodes).find((n) => n.nodeType === 1 && n.localName === 'sdtContent');
+      hijos = contenido ? Array.from(contenido.childNodes).filter((n) => n.nodeType === 1) : [];
+    }
     return !hijos.length || hijos[hijos.length - 1].localName !== 'p';
   });
   if (celdasMalas.length) {
@@ -3635,6 +3759,22 @@ async function generateInformeWordBlob(informe, opciones = {}) {
 // descargas para eso — ahí se guarda el archivo de verdad en el dispositivo
 // con el plugin Filesystem y se ofrece compartirlo/abrirlo de una vez.
 async function descargarBlob(blob, nombreArchivo, opciones = {}) {
+  // Version de escritorio (Windows, ver electron/): usa el dialogo nativo
+  // "Guardar como" en vez del <a download> del navegador, para que el usuario
+  // elija la carpeta igual que en cualquier programa de escritorio.
+  if (window.escritorio && window.escritorio.esEscritorio) {
+    try {
+      const buf = await blob.arrayBuffer();
+      const resultado = await window.escritorio.guardarArchivo(nombreArchivo, buf);
+      if (resultado && resultado.cancelado) return;
+      if (resultado && resultado.ruta) showToast(`Guardado: ${resultado.ruta}`);
+      else showToast(`Guardado: ${nombreArchivo}`);
+    } catch (e) {
+      console.error('No se pudo guardar el archivo (escritorio):', e);
+      showToast('No se pudo guardar el archivo');
+    }
+    return;
+  }
   const esApp = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
   if (esApp) {
     try {
@@ -4174,7 +4314,7 @@ function abrirEdicionTextoInforme(informe, campo, etiqueta, valorActual) {
       await guardarCampoInformeActivo(campo, valor);
       // El nombre del informe (el que se ve en la lista y en el formulario
       // clásico) lleva el título: se mantienen iguales.
-      if (campo === 'tituloGeneral' && informe.numero) await guardarCampoInformeActivo('nombre', `IT-MCEN-${informe.numero}-SUL — ${valor}`);
+      if (campo === 'tituloGeneral' && informe.numero) await guardarCampoInformeActivo('nombre', `${codigoInformeDe(informe.numero)} — ${valor}`);
       await refrescarVistaInteractiva();
     },
   });
@@ -7384,7 +7524,7 @@ function irAVista(nombre) {
   // clase es la que apaga el layout de 3 paneles (Avance/Curva S) — sin esto,
   // esas páginas quedan tapadas por ese layout aunque su propio <div class="view">
   // sí esté activo.
-  document.body.classList.toggle('en-inicio', nombre === 'inicio' || nombre === 'informes' || nombre === 'informe-detalle');
+  document.body.classList.toggle('en-inicio', nombre === 'inicio' || nombre === 'informes' || nombre === 'informe-detalle' || nombre === 'control');
 
   if (nombre === 'curva') renderChart();
   if (nombre === 'avance') { renderGanttChart(); renderList(); }

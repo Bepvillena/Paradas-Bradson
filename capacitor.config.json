@@ -1,6 +1,6 @@
 {
-  "appId": "cl.bradson.paradas.prueba",
-  "appName": "Paradas Bradson",
+  "appId": "cl.core.bitacora.paradas.previa",
+  "appName": "CORE Bitácora de Paradas",
   "webDir": "www",
   "android": {
     "allowMixedContent": false

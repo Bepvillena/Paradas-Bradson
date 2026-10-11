@@ -1,0 +1,45 @@
+{
+  "checks": [
+    "package import",
+    "separate parada data",
+    "restore fresh profile catalog and active parada",
+    "pilot data preserved",
+    "single-row mobile header",
+    "signature upload and reload"
+  ],
+  "dimensions": {
+    "width": 794,
+    "height": 1123
+  },
+  "bounds": [
+    {
+      "id": "vistaInteractivaCerrar",
+      "x": 9,
+      "y": 8,
+      "w": 34,
+      "h": 34
+    },
+    {
+      "id": "editorTitulo",
+      "x": 49,
+      "y": 16.5,
+      "w": 226.796875,
+      "h": 17
+    },
+    {
+      "id": "editorBtnWord",
+      "x": 281.796875,
+      "y": 8,
+      "w": 50.25,
+      "h": 34
+    },
+    {
+      "id": "editorBtnPdf",
+      "x": 338.046875,
+      "y": 8,
+      "w": 42.953125,
+      "h": 34
+    }
+  ],
+  "errors": []
+}
