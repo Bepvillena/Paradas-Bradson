@@ -7,8 +7,8 @@ android {
         applicationId "cl.core.bitacora.paradas.previa"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 20200
-        versionName "2.2.0-previa.1"
+        versionCode 20203
+        versionName "2.2.3-previa.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

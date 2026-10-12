@@ -11,7 +11,7 @@
     check: '<path d="m5 12 4 4L19 6"/>', warn: '<path d="M12 3 2 20h20zM12 10v5M12 18v.5"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>', save: '<path d="M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6"/>',
     chat: '<path d="M4 5h16v11H9l-5 4z"/>', spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>', target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
-    bell: '<path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7zM10 20h4"/>', upload: '<path d="M12 16V4m-5 5 5-5 5 5M4 16v5h16v-5"/>',
+    bell: '<path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7zM10 20h4"/>', upload: '<path d="M12 16V4m-5 5 5-5 5 5M4 16v5h16v-5"/>', share: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6"/>', grid: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 4v16M13 13h5M11 16h6"/>', download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
   };
   const ic = (n, cls) => `<svg class="ui-icon ${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n] || I.info}</svg>`;
   const toast = (m) => { try { showToast(m); } catch (e) { alert(m); } };
@@ -51,7 +51,7 @@
   const paradaNombre = () => (SEED_DATA.paradaNombre || '').replace(/ — FCR&M$/, '');
 
   // ------------------------------------------------------------------ estado de la pantalla
-  const S = { tab: 'cierre', turno: null, soloAlertas: false, cierres: [], wa: null, ia: { respuesta: '' } };
+  const S = { dist: { modo: 'detalle', sup: true, cache: {}, ocupado: false }, tab: 'cierre', turno: null, soloAlertas: false, cierres: [], wa: null, ia: { respuesta: '' } };
   const lvl = { critica: ['Crítica', 'crit'], atraso: ['Atraso', 'warn'], aviso: ['Aviso', 'aviso'], info: ['Info', 'info'] };
   const nivelFila = { completada: ['Completada', 'ok'], critica: ['Crítica', 'crit'], atrasada: ['Atrasada', 'warn'], ok: ['En plazo', 'ok2'], adelantada: ['Adelantada', 'ok'], 'por-iniciar': ['Por iniciar', 'muted'], pausada: ['En pausa', 'muted'] };
   const pc = (v) => (v == null ? '—' : Math.round(v * 100) + '%');
@@ -73,6 +73,7 @@
         <button type="button" role="tab" data-core-tab="cierre">${ic('target')}Cierre y alertas</button>
         <button type="button" role="tab" data-core-tab="whatsapp">${ic('chat')}Importar WhatsApp</button>
         <button type="button" role="tab" data-core-tab="ia">${ic('spark')}Redactar con IA</button>
+        <button type="button" role="tab" data-core-tab="dist">${ic('grid')}Distribución A4</button>
       </div>
       <div id="coreContenido"></div>`;
     document.querySelector('main').appendChild(v);
@@ -88,9 +89,11 @@
     try {
       if (S.tab === 'cierre') cont.innerHTML = htmlCierre();
       else if (S.tab === 'whatsapp') cont.innerHTML = htmlWhatsApp();
+      else if (S.tab === 'dist') cont.innerHTML = htmlDistribucion();
       else cont.innerHTML = htmlIA();
     } catch (e) { console.error(e); cont.innerHTML = `<div class="ui-panel core-pad"><h2>No se pudo calcular</h2><p>${h(e.message)}</p></div>`; }
     if (S.tab === 'whatsapp') pintarFotosWhatsApp();
+    if (S.tab === 'dist') pintarDistribucion();
   }
 
   const selectorTurno = () => `<label class="ui-filter core-turno"><span>Turno</span><select id="coreTurno">${SEED_DATA.turnoLabels.map((l, i) => `<option value="${i}" ${i === S.turno ? 'selected' : ''}>${h(l)}</option>`).join('')}</select></label>`;
@@ -183,6 +186,97 @@
     });
   }
 
+  // ---- 5) Distribución A4 (PDF / imagen)
+  const MODOS = [
+    { id: 'detalle', nombre: 'Detallado', desc: 'Cada trabajo con todos sus pasos, uno bajo otro, cada uno con su barra.' },
+    { id: 'resumen', nombre: 'Resumido', desc: 'Una sola fila por trabajo: las barras de todos sus pasos se pintan en esa misma línea.' },
+  ];
+  function htmlDistribucion() {
+    const tarjetas = MODOS.map((m) => `<button type="button" class="core-dist-card ${S.dist.modo === m.id ? 'on' : ''}" data-core="dist-modo" data-m="${m.id}"><span class="core-dist-th" data-th="${m.id}">Cargando…</span><strong>${h(m.nombre)}</strong><small>${h(m.desc)}</small></button>`).join('');
+    return `<section class="ui-panel core-sec core-pad"><div class="ui-panel-heading"><div><h2>Distribución de la parada en A4</h2><p>Cuadro de días y horas con las actividades, la barra de cada cuadrilla y los bloques de terceros. Elige cuánto detalle quieres y descarga en PDF o en imagen.</p></div>${ic('grid')}</div>
+      <div class="core-dist-estilos">${tarjetas}</div>
+      <label class="core-check core-sup-chk"><input type="checkbox" id="coreDistSup" ${S.dist.sup ? 'checked' : ''}> Mostrar el supervisor de día y de noche de cada trabajo (los que cargaste en cada actividad)</label>
+      <div class="core-bar-actions"><button class="ui-button primary" data-core="dist-pdf" ${S.dist.ocupado ? 'disabled' : ''}>${ic('download')}Descargar PDF (A4)</button><button class="ui-button" data-core="dist-png" ${S.dist.ocupado ? 'disabled' : ''}>${ic('download')}Descargar imagen PNG (A4)</button></div>
+      <div class="core-bar-actions"><button class="ui-button core-wa-btn" data-core="dist-compartir-pdf" ${S.dist.ocupado ? 'disabled' : ''}>${ic('share')}Compartir PDF por WhatsApp</button><button class="ui-button core-wa-btn" data-core="dist-compartir-png" ${S.dist.ocupado ? 'disabled' : ''}>${ic('share')}Compartir imagen por WhatsApp</button></div>
+      <p class="core-nota-inline">En el teléfono, «Compartir» abre el menú de Android (elige WhatsApp y el chat). En el computador, la imagen queda copiada para pegarla en WhatsApp (Ctrl+V) y el PDF se guarda para adjuntarlo con el clip 📎. Hoja A4 horizontal. Si hay muchas actividades se reparte en varias hojas sin cortar un trabajo por la mitad. El PNG sale como una imagen por hoja (en un .zip si son varias).</p></section>
+    <section class="ui-panel core-sec"><div class="ui-panel-heading"><div><h2>Vista previa · ${h((MODOS.find((m) => m.id === S.dist.modo) || {}).nombre)}</h2><p id="coreDistPag"></p></div></div><div id="coreDistVista" class="core-dist-vista">Preparando vista previa…</div></section>`;
+  }
+  async function svgsDeModo(m) { const k = m + (S.dist.sup ? '+sup' : ''); if (!S.dist.cache[k]) S.dist.cache[k] = await window.CoreDistribucion.paginas(m, S.dist.sup); return S.dist.cache[k]; }
+  async function pintarDistribucion() {
+    const D = window.CoreDistribucion;
+    for (const m of MODOS) {
+      try {
+        const svgs = await svgsDeModo(m.id), c = await D.aCanvas(svgs[0], 1.6), el = document.querySelector('[data-th="' + m.id + '"]');
+        if (el) el.innerHTML = '<img alt="' + h(m.nombre) + '" src="' + c.toDataURL('image/png') + '">';
+      } catch (e) { console.error(e); }
+    }
+    try {
+      const svgs = await svgsDeModo(S.dist.modo), cont = $('coreDistVista'); if (!cont) return;
+      const imgs = [];
+      for (const sv of svgs) { const c = await D.aCanvas(sv, 3.2); imgs.push('<img alt="Hoja" src="' + c.toDataURL('image/png') + '">'); }
+      cont.innerHTML = imgs.join('');
+      const pg = $('coreDistPag'); if (pg) pg.textContent = svgs.length + (svgs.length === 1 ? ' hoja' : ' hojas') + ' A4';
+    } catch (e) { console.error(e); const cont = $('coreDistVista'); if (cont) cont.textContent = 'No se pudo preparar la vista previa: ' + e.message; }
+  }
+  // Comparte archivos con el menú de Android (WhatsApp, correo, Drive…). En navegador usa Web Share si existe.
+  async function compartirArchivos(archivos, titulo) {
+    const nativo = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+    if (nativo) {
+      const { Filesystem, Share } = window.Capacitor.Plugins, uris = [];
+      for (const a of archivos) {
+        const data = await new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = ko; r.readAsDataURL(a.blob); });
+        const w = await Filesystem.writeFile({ path: 'compartir/' + a.name, data, directory: 'CACHE', recursive: true });
+        uris.push(w.uri);
+      }
+      try { await Share.share({ title: titulo, files: uris, dialogTitle: 'Compartir por WhatsApp u otra app' }); }
+      catch (e) { if (!/cancel/i.test(String(e && e.message))) throw e; }
+      return true;
+    }
+    const files = archivos.map((a) => new File([a.blob], a.name, { type: a.blob.type }));
+    if (navigator.canShare && navigator.canShare({ files })) {
+      try { await navigator.share({ files, title: titulo }); } catch (e) { if (e && e.name !== 'AbortError') throw e; }
+      return true;
+    }
+    return false;
+  }
+  async function compartirDistribucion(formato) {
+    const D = window.CoreDistribucion, m = S.dist.modo;
+    S.dist.ocupado = true;
+    try {
+      toast('Preparando para compartir…');
+      const svgs = await svgsDeModo(m), base = 'Distribucion-parada-' + m;
+      let archivos;
+      if (formato === 'pdf') archivos = [{ blob: await D.aPdf(svgs), name: base + '.pdf' }];
+      else { archivos = []; for (let i = 0; i < svgs.length; i++) archivos.push({ blob: await D.aBlob(await D.aCanvas(svgs[i], 7)), name: base + (svgs.length > 1 ? '-hoja' + (i + 1) : '') + '.png' }); }
+      if (await compartirArchivos(archivos, 'Distribución de la parada')) return;
+      // Computador: WhatsApp Escritorio/Web no recibe archivos desde aquí.
+      if (formato === 'png' && archivos.length === 1 && navigator.clipboard && window.ClipboardItem) {
+        try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': archivos[0].blob })]); toast('Imagen copiada ✓ Abre el chat de WhatsApp y pégala con Ctrl+V'); return; } catch (e) { console.warn('Portapapeles no disponible', e); }
+      }
+      if (formato === 'png' && archivos.length > 1) {
+        const z = new JSZip(); archivos.forEach((a) => z.file(a.name, a.blob));
+        await descargarBlob(await z.generateAsync({ type: 'blob' }), base + '-PNG.zip');
+      } else await descargarBlob(archivos[0].blob, archivos[0].name);
+      toast('Guardado ✓ En WhatsApp: clip 📎 → Documento (o Galería) y elige el archivo');
+    } finally { S.dist.ocupado = false; render(); }
+  }
+
+  async function descargarDistribucion(formato) {
+    const D = window.CoreDistribucion, m = S.dist.modo;
+    S.dist.ocupado = true;
+    try {
+      toast('Preparando el archivo…');
+      const svgs = await svgsDeModo(m), base = 'Distribucion-parada-' + m;
+      if (formato === 'pdf') await descargarBlob(await D.aPdf(svgs), base + '.pdf');
+      else if (svgs.length === 1) await descargarBlob(await D.aBlob(await D.aCanvas(svgs[0], 9)), base + '.png');
+      else {
+        const z = new JSZip();
+        for (let i = 0; i < svgs.length; i++) z.file(base + '-hoja' + (i + 1) + '.png', await D.aBlob(await D.aCanvas(svgs[i], 9)));
+        await descargarBlob(await z.generateAsync({ type: 'blob' }), base + '-PNG.zip');
+      }
+    } finally { S.dist.ocupado = false; }
+  }
+
   // ---- 4) IA (copiar y pegar)
   function htmlIA() {
     const res = evaluar(S.turno);
@@ -240,6 +334,11 @@
       else if (acc === 'wa-marcar-con-ot') { S.wa.props.forEach((x) => { x.incluir = x.otNum != null && x.turnoIdx >= 0; }); render(); }
       else if (acc === 'wa-desmarcar') { S.wa.props.forEach((x) => { x.incluir = false; }); render(); }
       else if (acc === 'wa-importar') await importarWhatsApp(b);
+      else if (acc === 'dist-modo') { S.dist.modo = b.dataset.m; render(); }
+      else if (acc === 'dist-pdf') await descargarDistribucion('pdf');
+      else if (acc === 'dist-compartir-pdf') await compartirDistribucion('pdf');
+      else if (acc === 'dist-compartir-png') await compartirDistribucion('png');
+      else if (acc === 'dist-png') await descargarDistribucion('png');
     } catch (err) { console.error(err); toast('No se pudo completar: ' + (err.message || err)); }
   }
 
@@ -247,6 +346,7 @@
     const t = e.target;
     if (t.id === 'coreTurno') { S.turno = +t.value; render(); }
     else if (t.id === 'coreSoloAlertas') { S.soloAlertas = t.checked; render(); }
+    else if (t.id === 'coreDistSup') { S.dist.sup = t.checked; render(); }
     else if (t.id === 'coreWaArchivo') leerArchivoWhatsApp(t.files[0]);
     else if (t.dataset.waInc != null) { const x = S.wa.props.find((p) => p.id === +t.dataset.waInc); if (x) { x.incluir = t.checked; render(); } }
     else if (t.dataset.waOt != null) {
@@ -379,7 +479,7 @@
       if (ev.detail === 'control') { S.turno = S.turno == null ? turnoPorDefecto() : S.turno; render(); }
       if (ev.detail === 'informe-detalle') setTimeout(asegurarBotonChequeo, 50);
     });
-    window.addEventListener('paradas:render', () => { if (document.body.dataset.page === 'control' && S.tab !== 'whatsapp' && S.tab !== 'ia') render(); });
+    window.addEventListener('paradas:render', () => { S.dist.cache = {}; if (document.body.dataset.page === 'control' && S.tab === 'cierre') render(); });
     setInterval(revisarCorte, 30000);
   }
   document.addEventListener('DOMContentLoaded', async () => { try { await window.ParadasCatalog?.ready; } catch (e) { /* sigue */ } setTimeout(iniciar, 0); });

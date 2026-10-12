@@ -1,6 +1,6 @@
 {
   "name": "core-bitacora-paradas-desktop",
-  "version": "2.2.0",
+  "version": "2.2.3",
   "description": "CORE - Bitácora de Paradas de Planta - versión de escritorio (Windows)",
   "private": true,
   "main": "main.js",

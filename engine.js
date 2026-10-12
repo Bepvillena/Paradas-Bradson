@@ -2504,6 +2504,22 @@ function calcularSupervisorInforme(ots, tipoTurno) {
   return mejor;
 }
 
+// ---- "SUPERVISORES POR ACTIVIDAD": qué supervisor (día y noche, los que se cargan en cada
+// actividad de la app) tuvo cada trabajo del informe. Va justo antes de las actividades de la parada. ----
+function buildTablaSupervisoresWord(filas) {
+  const fuente = '<w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Times New Roman"/>';
+  const borde = (l) => `<w:${l} w:val="single" w:sz="4" w:space="0" w:color="000000"/>`;
+  const bordes = `<w:tcBorders>${borde('top')}${borde('left')}${borde('bottom')}${borde('right')}</w:tcBorders>`;
+  const enc = colorEncabezadoTabla();
+  const anchos = [1134, 4672, 2200, 2200];
+  const celda = (w, txt, o = {}) => `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${o.span ? `<w:gridSpan w:val="${o.span}"/>` : ''}${bordes}${o.fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>` : ''}<w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:before="50" w:after="50" w:line="240" w:lineRule="auto"/><w:jc w:val="${o.izq ? 'left' : 'center'}"/></w:pPr><w:r><w:rPr>${fuente}${o.negrita ? '<w:b/>' : ''}${o.color || ''}<w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t xml:space="preserve">${escXmlWord(txt)}</w:t></w:r></w:p></w:tc>`;
+  const fila = (celdas, cab) => `<w:tr><w:trPr><w:cantSplit/>${cab ? '<w:tblHeader/>' : ''}</w:trPr>${celdas}</w:tr>`;
+  let rows = fila(celda(10206, 'SUPERVISORES POR ACTIVIDAD', { span: 4, fill: enc.fill, negrita: true, color: enc.colorXml }), true);
+  rows += fila(['OT', 'ACTIVIDAD', 'SUPERVISOR DÍA', 'SUPERVISOR NOCHE'].map((t, i) => celda(anchos[i], t, { fill: 'F2F2F2', negrita: true })).join(''), true);
+  filas.forEach((f) => { rows += fila(celda(anchos[0], f.ot.manual ? 'Emerg.' : String(f.ot.otNum)) + celda(anchos[1], tituloSinEquipo(f.ot.descripcion), { izq: true }) + celda(anchos[2], f.dia || '—') + celda(anchos[3], f.noche || '—')); });
+  return `<w:tbl><w:tblPr><w:tblW w:w="10206" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${anchos.map((w) => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>${rows}</w:tbl>`;
+}
+
 // ---- "CUMPLIMIENTO MECÁNICO SOBRE ACTIVIDADES": tabla TAG/OT/DESCRIPCIÓN/
 // % EJECUCIÓN + gráfico de torta debajo, tal como se arma en los informes
 // reales — no viene en esta plantilla, así que se inserta entera bajo su
@@ -3203,6 +3219,18 @@ async function generateInformeWordBlob(informe, opciones = {}) {
     }
   } catch (e) {
     console.error('No se pudo agregar el Supervisor Mecánico Día/Noche en el Word:', e);
+  }
+
+  // Supervisores por actividad (solo si se cargó al menos uno): tabla propia antes de las actividades de la parada.
+  try {
+    const filasSup = ots.map((ot) => ({ ot, dia: getOtSupervisor(ot.otNum, 'A'), noche: getOtSupervisor(ot.otNum, 'B') }));
+    const aSup = xml.indexOf(INFORME_TABLA_ANCLA);
+    if (filasSup.some((f) => f.dia || f.noche) && aSup !== -1) {
+      const tIni = xml.lastIndexOf('<w:tbl>', aSup);
+      if (tIni !== -1) xml = xml.slice(0, tIni) + buildTablaSupervisoresWord(filasSup) + buildParrafoVacioWord() + xml.slice(tIni);
+    }
+  } catch (e) {
+    console.error('No se pudo agregar la tabla de supervisores por actividad:', e);
   }
 
   const anclaIdx = xml.indexOf(INFORME_TABLA_ANCLA);
