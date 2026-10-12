@@ -1,6 +1,6 @@
 {
   "name": "paradas-bradson",
-  "version": "2.2.0",
+  "version": "2.2.3",
   "description": "CORE - Bitácora de Paradas de Planta (version local, sin Firebase, para empaquetar como APK con Capacitor)",
   "private": true,
   "scripts": {

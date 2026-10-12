@@ -37,6 +37,7 @@ const ASSETS = [
   './core.css',
   './core-calculo.js',
   './core-ui.js',
+  './core-distribucion.js',
   './assets/logo-centinela.jpg',
   './assets/logo-dimarza.png',
   './icons/icon-192.png',
